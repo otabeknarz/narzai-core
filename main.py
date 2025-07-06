@@ -1,31 +1,158 @@
-import json
+from dotenv import load_dotenv
+load_dotenv()
 
-from ai import get_ai
-from handlers import get_agent 
+from langchain.chat_models import init_chat_model
+from pydantic import BaseModel, Field
 
-Agent = get_agent()
-AI = get_ai()
+from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
+from typing import Annotated, Optional
+from langgraph.types import Command
+from langchain.chat_models import init_chat_model
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+
+# LLM
+llm = init_chat_model("google_genai:gemini-2.0-flash")
+parser = StrOutputParser()
+
+def merge_questions(existing: list[str], new: list[str]) -> list[str]:
+    return existing + new
+
+# The overall state of the graph (this is the public state shared across nodes)
+class OverallState(BaseModel):
+    messages: Annotated[list[AnyMessage], add_messages] 
+    name: str
+    description: Optional[str] = None
+    enough: Optional[bool] = None
+    summary: Optional[str] = None
+    TZ: Optional[str] = None
+    questions: Annotated[list[str], merge_questions]
+    finished: Optional[bool] = None
+
+def createSummary(state: OverallState):
+    if state.questions:
+        qna_text = "\n".join(state.questions)
+        description = state.description + "\n\nAdditional user answers:\n" + qna_text
+    else:
+        description = state.description
+    if state.enough == True:
+        return Command(goto="startProject")
+
+    prompt = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a helpful assistant that determines whether a project description is sufficient to start building a Telegram bot. "
+        "If not, you must say what’s missing. For now let's say these three info are required for collection: name, telegram_id, age. If they don't include other than those three data, you can excuse them."
+    ),
+    (
+        "human",
+        "Project description:\n\n{description}\n\n"
+        "Based on this, answer the following in JSON format, don't add anything:\n"
+        "{{"
+        "\"enough\": true/false, "
+        "\"summary\": brief summary of the goal, "
+        "\"TZ\": the time zone of the user if provided or inferred, else null"
+        "}}"
+    ),
+    ])
+
+    chain = prompt | llm | parser
+    result = chain.invoke({"description": description})[8:-3]
+    print("Raw LLM output:", result)
+    try:
+        import json
+        llm_reply = json.loads(result)
+    except json.JSONDecodeError:
+        llm_reply = {
+            "enough": False,
+            "summary": None,
+            "TZ": None
+        }
+    print(llm_reply.get("enough"))
+    if llm_reply.get("enough")==True:
+        goto = "startProject" 
+    else: goto = "askFromUser"
+
+    return Command(
+        update={
+            "enough": llm_reply.get("enough"),
+            "summary": llm_reply.get("summary"),
+            "TZ": llm_reply.get("TZ"),
+        },
+        goto=goto,
+    )
 
 
-def main() -> None:
-    user_prompt = input("Write your project description: ")
-    response = AI.gemini_call_json(model="gemini-2.5-flash", user_prompt=user_prompt, system_prompt=Agent.SYSTEM_PROMPT_START)
-    Agent.states = {"first_description": user_prompt}
+def askFromUser(state: OverallState):
+    if state.enough == True:  # If already marked enough, skip
+        return Command(goto="createSummary")
 
-    dispatcher = {
-        "askFromUser": Agent.ask_from_user,
-        "makeSummaryOfProject": Agent.make_summary_of_project,
-        "makeTZFromSummary": Agent.make_TZ_from_summary, 
-        "initializeProject": Agent.initialize_project, 
-        "installDependencies": Agent.install_dependencies,
-        "writeToFile": Agent.write_to_file,
-    }
-    loop = True
-    while loop:
-        response = dispatcher.get(response.get("method", ""), lambda: ...)(params=response.get("params", {}))
-        if response.get("method") == "makeSummaryOfProject":
-            loop = False
+    question_answers = state.questions or []
+
+    print("Your description of the project is not sufficient. Please answer the following questions: ")
+    questions = ["What kind of info should we collect?"]
+
+    for question in questions:
+        answer = input(question + "\n")
+        question_answers.append(f"{question} {answer}")
+
+    return Command(update={"questions": question_answers}, goto="createSummary")
+
+def startProject(state: OverallState): # UNFINISHED
+    final_message = f"Project started! Summary:\n\n{state.summary}"
+    print("Project Started")
+    return Command(
+        update={
+            "messages": state.messages + [AIMessage(content=final_message)],
+            "finished": True
+        }
+    )
 
 
-if __name__ == "__main__":
-    main()
+# Build the state graph
+builder = StateGraph(OverallState)
+builder.add_node(createSummary) 
+builder.add_node(askFromUser) 
+builder.add_node(startProject) 
+
+# TIP: really think about the graph structure. i think there is too much going on. connections between nodes makes it ez to go to other notes somehow.
+# UPD: i was right
+builder.add_edge(START, "createSummary")
+builder.add_edge("startProject", END)
+
+graph = builder.compile()
+
+# Test the graph with a valid input
+
+print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. ")
+name = input("What is the name of the project? ")
+description = input("Give me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive.")
+
+
+result = graph.invoke({"name": name, "description": description, "questions": [],})
+for message in result["messages"]:
+    message.pretty_print()
+
+with open("state_graph.png", "wb") as f:
+    f.write(graph.get_graph().draw_mermaid_png())
+print("Graph Image generated.")
+
+"""
+llm = init_chat_model("google_genai:gemini-2.0-flash")
+
+
+class Feedback(BaseModel):
+    evaluation: Litaral["enough", "not enough"] = Field(
+        description="Decide whether the desctiption is sufficient or not to start the project."
+    )
+"""
+# example prompt
+# name:
+# elephant image gen bot
+# description:
+# The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
+# data to collect:
+# ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc). 
