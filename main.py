@@ -9,7 +9,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing import Annotated, Optional
-from IPython.display import Image, display
 from langgraph.types import Command
 from typing_extensions import TypedDict, Literal
 from langchain.chat_models import init_chat_model
@@ -20,6 +19,8 @@ from langchain_core.prompts import ChatPromptTemplate
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 parser = StrOutputParser()
 
+def merge_questions(existing: list[str], new: list[str]) -> list[str]:
+    return existing + new
 
 # The overall state of the graph (this is the public state shared across nodes)
 class OverallState(BaseModel):
@@ -29,22 +30,28 @@ class OverallState(BaseModel):
     enough: Optional[bool] = None
     summary: Optional[str] = None
     TZ: Optional[str] = None
-    questions: Annotated[list[dict], add_messages] 
+    questions: Annotated[list[str], merge_questions]
     finished: Optional[bool] = None
 
 def createSummary(state: OverallState) -> Command[Literal["startProject", "askFromUser"]]:
-    description = state.description
+    if state.questions:
+        qna_text = "\n".join(state.questions)
+        description = state.description + "\n\nAdditional user answers:\n" + qna_text
+    else:
+        description = state.description
+    if state.enough == True or state.finished == True:
+        return Command(goto="startProject")
 
     prompt = ChatPromptTemplate.from_messages([
     (
         "system",
         "You are a helpful assistant that determines whether a project description is sufficient to start building a Telegram bot. "
-        "If not, you must say what’s missing."
+        "If not, you must say what’s missing. For now let's say these three info are required for collection: name, telegram_id, age. If they don't include other than those three data, you can excuse them."
     ),
     (
         "human",
         "Project description:\n\n{description}\n\n"
-        "Based on this, answer the following in JSON format:\n"
+        "Based on this, answer the following in JSON format, don't add anything:\n"
         "{{"
         "\"enough\": true/false, "
         "\"summary\": brief summary of the goal, "
@@ -54,8 +61,8 @@ def createSummary(state: OverallState) -> Command[Literal["startProject", "askFr
     ])
 
     chain = prompt | llm | parser
-    result = chain.invoke({"description": description})
-
+    result = chain.invoke({"description": description})[8:-3]
+    print("Raw LLM output:", result)
     try:
         import json
         llm_reply = json.loads(result)
@@ -65,11 +72,11 @@ def createSummary(state: OverallState) -> Command[Literal["startProject", "askFr
             "summary": None,
             "TZ": None
         }
-
     goto = "startProject" if llm_reply.get("enough") else "askFromUser"
 
     return Command(
         update={
+            "enough": llm_reply.get("enough"),
             "summary": llm_reply.get("summary"),
             "TZ": llm_reply.get("TZ"),
         },
@@ -78,21 +85,32 @@ def createSummary(state: OverallState) -> Command[Literal["startProject", "askFr
 
 
 def askFromUser(state: OverallState):
-    messages = state.messages
-    description = state.description
-    question_answers = state.questions
+    if state.enough == True or state.finished == True:  # If already marked enough, skip
+        return Command(goto="startProject")
+
+    question_answers = state.questions or []
 
     print("Your description of the project is not sufficient. Please answer the following questions: ")
     questions = ["What kind of info should we collect?"]
 
     for question in questions:
         answer = input(question + "\n")
-        question_answers += [question + " " + answer]
+        question_answers.append(f"{question} {answer}")
 
     return {"questions": question_answers}
 
-def startProject(state: OverallState):
-    return state
+
+def startProject(state: OverallState): # UNFINISHED
+    final_message = f"Project started! Summary:\n\n{state.summary}"
+    print("Project Started")
+    if state.enough == True: exit(0) # for now, EXIT at "startProject" node
+    return Command(
+        update={
+            "messages": state.messages + [AIMessage(content=final_message)],
+            "finished": True
+        }
+    )
+
 
 # Build the state graph
 builder = StateGraph(OverallState)
@@ -100,12 +118,11 @@ builder.add_node(createSummary)
 builder.add_node(askFromUser) 
 builder.add_node(startProject) 
 
-
+# TIP: really think about the graph structure. i think there is too much going on. connections between nodes makes it ez to go to other notes somehow.
 builder.add_edge(START, "createSummary")  
 builder.add_edge("createSummary", "askFromUser")  
-builder.add_edge("createSummary", "startProject")  
-
-builder.add_edge("startProject", END)  
+builder.add_edge("createSummary", "startProject")
+builder.add_edge("askFromUser", "createSummary") # this creates loop ig. my brain not braining no more. TRY NOT GOING BACK TO createSummary, but finish the task there instead!
 graph = builder.compile()
 
 # Test the graph with a valid input
@@ -115,23 +132,23 @@ name = input("What is the name of the project? ")
 description = input("Give me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive.")
 
 
-result = graph.invoke({"name": name, "description": description})
+result = graph.invoke({"name": name, "description": description, "questions": [],})
 for message in result["messages"]:
     message.pretty_print()
 
-display(Image(graph.get_graph().draw_mermaid_png()))
 with open("state_graph.png", "wb") as f:
     f.write(graph.get_graph().draw_mermaid_png())
+print("Graph Image generated.")
 
 """
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 
 
-class Feedbakck(BaseModel):
+class Feedback(BaseModel):
     evaluation: Litaral["enough", "not enough"] = Field(
         description="Decide whether the desctiption is sufficient or not to start the project."
     )
 """
-
+# Some example prompts
 # The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
-# ideally, no info. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc)
+# ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc). 
