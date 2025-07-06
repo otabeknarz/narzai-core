@@ -33,13 +33,13 @@ class OverallState(BaseModel):
     questions: Annotated[list[str], merge_questions]
     finished: Optional[bool] = None
 
-def createSummary(state: OverallState) -> Command[Literal["startProject", "askFromUser"]]:
+def createSummary(state: OverallState):
     if state.questions:
         qna_text = "\n".join(state.questions)
         description = state.description + "\n\nAdditional user answers:\n" + qna_text
     else:
         description = state.description
-    if state.enough == True or state.finished == True:
+    if state.enough == True:
         return Command(goto="startProject")
 
     prompt = ChatPromptTemplate.from_messages([
@@ -72,7 +72,10 @@ def createSummary(state: OverallState) -> Command[Literal["startProject", "askFr
             "summary": None,
             "TZ": None
         }
-    goto = "startProject" if llm_reply.get("enough") else "askFromUser"
+    print(llm_reply.get("enough"))
+    if llm_reply.get("enough")==True:
+        goto = "startProject" 
+    else: goto = "askFromUser"
 
     return Command(
         update={
@@ -85,8 +88,8 @@ def createSummary(state: OverallState) -> Command[Literal["startProject", "askFr
 
 
 def askFromUser(state: OverallState):
-    if state.enough == True or state.finished == True:  # If already marked enough, skip
-        return Command(goto="startProject")
+    if state.enough == True:  # If already marked enough, skip
+        return Command(goto="createSummary")
 
     question_answers = state.questions or []
 
@@ -97,13 +100,12 @@ def askFromUser(state: OverallState):
         answer = input(question + "\n")
         question_answers.append(f"{question} {answer}")
 
-    return {"questions": question_answers}
-
+    return Command(update={"questions": question_answers}, goto="createSummary")
 
 def startProject(state: OverallState): # UNFINISHED
     final_message = f"Project started! Summary:\n\n{state.summary}"
     print("Project Started")
-    if state.enough == True: exit(0) # for now, EXIT at "startProject" node
+    # if state.enough == True: exit(0) # for now, EXIT at "startProject" node
     return Command(
         update={
             "messages": state.messages + [AIMessage(content=final_message)],
@@ -119,10 +121,9 @@ builder.add_node(askFromUser)
 builder.add_node(startProject) 
 
 # TIP: really think about the graph structure. i think there is too much going on. connections between nodes makes it ez to go to other notes somehow.
-builder.add_edge(START, "createSummary")  
-builder.add_edge("createSummary", "askFromUser")  
-builder.add_edge("createSummary", "startProject")
-builder.add_edge("askFromUser", "createSummary") # this creates loop ig. my brain not braining no more. TRY NOT GOING BACK TO createSummary, but finish the task there instead!
+builder.add_edge(START, "createSummary")
+builder.add_edge("startProject", END)
+
 graph = builder.compile()
 
 # Test the graph with a valid input
@@ -149,6 +150,10 @@ class Feedback(BaseModel):
         description="Decide whether the desctiption is sufficient or not to start the project."
     )
 """
-# Some example prompts
+# example prompt
+# name:
+# elephant image gen bot
+# description:
 # The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
+# data to collect:
 # ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc). 

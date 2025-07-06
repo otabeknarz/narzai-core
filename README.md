@@ -1,1 +1,1 @@
-# narzai-core
+# botanica
