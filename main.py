@@ -105,7 +105,6 @@ def askFromUser(state: OverallState):
 def startProject(state: OverallState): # UNFINISHED
     final_message = f"Project started! Summary:\n\n{state.summary}"
     print("Project Started")
-    # if state.enough == True: exit(0) # for now, EXIT at "startProject" node
     return Command(
         update={
             "messages": state.messages + [AIMessage(content=final_message)],
@@ -121,6 +120,7 @@ builder.add_node(askFromUser)
 builder.add_node(startProject) 
 
 # TIP: really think about the graph structure. i think there is too much going on. connections between nodes makes it ez to go to other notes somehow.
+# UPD: i was right
 builder.add_edge(START, "createSummary")
 builder.add_edge("startProject", END)
 
