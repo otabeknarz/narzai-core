@@ -13,13 +13,28 @@ from langgraph.types import Command
 from langchain.chat_models import init_chat_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from typing_extensions import Literal
+from prompts import SYSTEM_PROMPT_START, SYSTEM_PROMPT_SUMMARY
+
+import re
+import json
 
 # LLM
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 parser = StrOutputParser()
 
+
+
 def merge_questions(existing: list[str], new: list[str]) -> list[str]:
     return existing + new
+
+def get_cleaned_dict(raw: str) -> dict:
+    raw_clean = re.sub(r"^```json|```$", "", raw.strip(), flags=re.IGNORECASE).strip()
+    try:
+        return json.loads(raw_clean)
+    except json.JSONDecodeError:
+        raw_clean = raw_clean.replace("'", '"')
+        return json.loads(raw_clean)
 
 # The overall state of the graph (this is the public state shared across nodes)
 class OverallState(BaseModel):
@@ -29,18 +44,16 @@ class OverallState(BaseModel):
     enough: Optional[bool] = None
     summary: Optional[str] = None
     TZ: Optional[str] = None
-    questions: Annotated[list[str], merge_questions]
+    questionsAnswers: Annotated[list[str], merge_questions]
+    questions: Optional[list[str]] = None
     finished: Optional[bool] = None
 
-def createSummary(state: OverallState):
+def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startProject"]]: 
+    description = state.description
     if state.questions:
         qna_text = "\n".join(state.questions)
-        description = state.description + "\n\nAdditional user answers:\n" + qna_text
-    else:
-        description = state.description
-    if state.enough == True:
-        return Command(goto="startProject")
-
+        description = description + "\n\nAdditional user answers:\n" + qna_text
+    
     prompt = ChatPromptTemplate.from_messages([
     (
         "system",
@@ -62,19 +75,14 @@ def createSummary(state: OverallState):
     chain = prompt | llm | parser
     result = chain.invoke({"description": description})[8:-3]
     print("Raw LLM output:", result)
-    try:
-        import json
-        llm_reply = json.loads(result)
-    except json.JSONDecodeError:
-        llm_reply = {
-            "enough": False,
-            "summary": None,
-            "TZ": None
-        }
+
+    llm_reply = get_cleaned_dict(result or "{}")
+
     print(llm_reply.get("enough"))
     if llm_reply.get("enough")==True:
         goto = "startProject" 
-    else: goto = "askFromUser"
+    else: 
+        goto = "askFromUser"
 
     return Command(
         update={
@@ -87,13 +95,11 @@ def createSummary(state: OverallState):
 
 
 def askFromUser(state: OverallState):
-    if state.enough == True:  # If already marked enough, skip
-        return Command(goto="createSummary")
 
-    question_answers = state.questions or []
+    questions_responses = state.questions or []
+    questions = state.questions or []
 
     print("Your description of the project is not sufficient. Please answer the following questions: ")
-    questions = ["What kind of info should we collect?"]
 
     for question in questions:
         answer = input(question + "\n")
@@ -102,7 +108,7 @@ def askFromUser(state: OverallState):
     return Command(update={"questions": question_answers}, goto="createSummary")
 
 def startProject(state: OverallState): # UNFINISHED
-    final_message = f"Project started! Summary:\n\n{state.summary}"
+    final_message = f"Project started! Summary:\n\n{state.summary} \n\n TZ: {state.TZ}"
     print("Project Started")
     return Command(
         update={
@@ -121,20 +127,21 @@ builder.add_node(startProject)
 # TIP: really think about the graph structure. i think there is too much going on. connections between nodes makes it ez to go to other notes somehow.
 # UPD: i was right
 builder.add_edge(START, "createSummary")
+builder.add_edge("askFromUser", "createSummary")
 builder.add_edge("startProject", END)
 
 graph = builder.compile()
 
 # Test the graph with a valid input
 
-print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. ")
-name = input("What is the name of the project? ")
-description = input("Give me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive.")
+print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n ")
+name = input("What is the name of the project? \n\n")
+description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n ")
 
 
 result = graph.invoke({"name": name, "description": description, "questions": [],})
 for message in result["messages"]:
-    message.pretty_print()
+   message.pretty_print()
 
 with open("state_graph.png", "wb") as f:
     f.write(graph.get_graph().draw_mermaid_png())
