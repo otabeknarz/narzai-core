@@ -28,7 +28,7 @@ Your tasks:
 ----------------------------------------------------------------
 If information is NOT sufficient:
 ----------------------------------------------------------------
-{
+{{
   "enough": false,
   "questions": [
     "What is the main purpose of the bot?",
@@ -36,17 +36,17 @@ If information is NOT sufficient:
   ],
   "summary": null,
   "TZ": null
-}
+}}
 
 ----------------------------------------------------------------
 If information IS sufficient:
 ----------------------------------------------------------------
-{
+{{
   "enough": true,
   "questions": null,
   "summary": "<natural-language summary of the project idea and functionality>",
   "TZ": "<technical specification: include all features, expected behavior, external libraries or APIs, edge cases, and implementation guidelines>"
-}
+}}
 
 ----------------------------------------------------------------
 Output Rules
