@@ -11,17 +11,18 @@ from langgraph.graph.message import add_messages
 from typing import Annotated, Optional
 from langgraph.types import Command
 from langchain.chat_models import init_chat_model
-from langchain_core.output_parsers import StrOutputParser
+from langchain.schema.runnable import RunnableLambda
 from langchain_core.prompts import ChatPromptTemplate
 from typing_extensions import Literal
 from prompts import SYSTEM_PROMPT_START, SYSTEM_PROMPT_SUMMARY
-
+from langchain_core.output_parsers.json import JsonOutputParser
 import re
 import json
 
 # LLM
 llm = init_chat_model("google_genai:gemini-2.0-flash")
-parser = StrOutputParser()
+parser = JsonOutputParser()
+
 
 
 
@@ -44,51 +45,47 @@ class OverallState(BaseModel):
     enough: Optional[bool] = None
     summary: Optional[str] = None
     TZ: Optional[str] = None
-    questionsAnswers: Annotated[list[str], merge_questions]
+    questionsAnswers: Annotated[list[str], merge_questions] 
     questions: Optional[list[str]] = None
     finished: Optional[bool] = None
 
 def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startProject"]]: 
     description = state.description
-    if state.questions:
-        qna_text = "\n".join(state.questions)
-        description = description + "\n\nAdditional user answers:\n" + qna_text
+    qna_text = ""
+    if state.questionsAnswers:
+        qna_text = "\n".join(state.questionsAnswers)
     
     prompt = ChatPromptTemplate.from_messages([
     (
         "system",
-        "You are a helpful assistant that determines whether a project description is sufficient to start building a Telegram bot. "
-        "If not, you must say what’s missing. For now let's say these three info are required for collection: name, telegram_id, age. If they don't include other than those three data, you can excuse them."
+        SYSTEM_PROMPT_START
     ),
     (
         "human",
-        "Project description:\n\n{description}\n\n"
-        "Based on this, answer the following in JSON format, don't add anything:\n"
-        "{{"
-        "\"enough\": true/false, "
-        "\"summary\": brief summary of the goal, "
-        "\"TZ\": the time zone of the user if provided or inferred, else null"
-        "}}"
+        """
+        First description: {description}\n\n
+        qa_history : {qna_text}
+        """
     ),
     ])
+    print(prompt)
 
     chain = prompt | llm | parser
-    result = chain.invoke({"description": description})[8:-3]
+    result = chain.invoke({"description": description, "qna_text": qna_text})
     print("Raw LLM output:", result)
 
-    llm_reply = get_cleaned_dict(result or "{}")
-
-    print(llm_reply.get("enough"))
-    if llm_reply.get("enough")==True:
+    print(result.get("enough"))
+    if result.get("enough")==True:
         goto = "startProject" 
     else: 
         goto = "askFromUser"
 
     return Command(
         update={
-            "enough": llm_reply.get("enough"),
-            "summary": llm_reply.get("summary"),
-            "TZ": llm_reply.get("TZ"),
+            "enough": result.get("enough"),
+            "questions": result.get("questions"),
+            "summary": result.get("summary"),
+            "TZ": result.get("TZ"),
         },
         goto=goto,
     )
@@ -96,16 +93,18 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
 
 def askFromUser(state: OverallState):
 
-    questions_responses = state.questions or []
+    qa_history = state.questionsAnswers or []
     questions = state.questions or []
 
     print("Your description of the project is not sufficient. Please answer the following questions: ")
 
     for question in questions:
         answer = input(question + "\n")
-        question_answers.append(f"{question} {answer}")
+        qa_history.append(f"{question} {answer}")
 
-    return Command(update={"questions": question_answers}, goto="createSummary")
+    print("\n\nQuesitons finished, thanks for asnwering\n\n")
+
+    return {"questionsAnswers": qa_history}
 
 def startProject(state: OverallState): # UNFINISHED
     final_message = f"Project started! Summary:\n\n{state.summary} \n\n TZ: {state.TZ}"
@@ -136,7 +135,7 @@ graph = builder.compile()
 
 print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n ")
 name = input("What is the name of the project? \n\n")
-description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n ")
+description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n")
 
 
 result = graph.invoke({"name": name, "description": description, "questions": [],})
