@@ -23,9 +23,6 @@ import json
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 parser = JsonOutputParser()
 
-
-
-
 def merge_questions(existing: list[str], new: list[str]) -> list[str]:
     return existing + new
 
@@ -51,28 +48,21 @@ class OverallState(BaseModel):
 
 def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startProject"]]: 
     description = state.description
-    qna_text = ""
-    if state.questionsAnswers:
-        qna_text = "\n".join(state.questionsAnswers)
+    qna_text = "\n".join(state.questionsAnswers)
     
     prompt = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        SYSTEM_PROMPT_START
-    ),
-    (
-        "human",
-        """
+        ("system", SYSTEM_PROMPT_START),
+        ("human", f"""
         First description: {description}\n\n
         qa_history : {qna_text}
-        """
-    ),
+        """),
     ])
-    print(prompt)
+
+    # print(prompt)
 
     chain = prompt | llm | parser
     result = chain.invoke({"description": description, "qna_text": qna_text})
-    print("Raw LLM output:", result)
+    # print("Raw LLM output:", result)
 
     print(result.get("enough"))
     if result.get("enough")==True:
@@ -92,7 +82,6 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
 
 
 def askFromUser(state: OverallState):
-
     qa_history = state.questionsAnswers or []
     questions = state.questions or []
 
@@ -116,49 +105,51 @@ def startProject(state: OverallState): # UNFINISHED
         }
     )
 
+def generateCode(summary: str) -> str:
+    prompt = (
+        "You are a Python developer.\n"
+        "Generate a complete aiogram-based Telegram bot project.\n"
+        "The bot should be able to handle the following tasks:\n"
+        f"{summary}\n"
+        "The code should be well-structured and include all necessary files and dependencies.\n"
+        "Please provide the code in a single response."
+    )
+    chain = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT_SUMMARY),
+        ("human", prompt)
+    ]) | llm
+    return chain.invoke({}).get("content", "")
 
 # Build the state graph
 builder = StateGraph(OverallState)
 builder.add_node(createSummary) 
 builder.add_node(askFromUser) 
 builder.add_node(startProject) 
-
-# TIP: really think about the graph structure. i think there is too much going on. connections between nodes makes it ez to go to other notes somehow.
-# UPD: i was right
 builder.add_edge(START, "createSummary")
 builder.add_edge("askFromUser", "createSummary")
 builder.add_edge("startProject", END)
-
 graph = builder.compile()
 
-# Test the graph with a valid input
+if __name__ == "__main__":
+    print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n ")
+    name = input("What is the name of the project? \n\n")
+    description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n")
 
-print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n ")
-name = input("What is the name of the project? \n\n")
-description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n")
+    result = graph.invoke({"name": name, "description": description, "questions": [],})
+    for message in result["messages"]:
+       message.pretty_print()
 
+    with open("state_graph.png", "wb") as f:
+        f.write(graph.get_graph().draw_mermaid_png())
+    print("Graph Image generated.")
 
-result = graph.invoke({"name": name, "description": description, "questions": [],})
-for message in result["messages"]:
-   message.pretty_print()
-
-with open("state_graph.png", "wb") as f:
-    f.write(graph.get_graph().draw_mermaid_png())
-print("Graph Image generated.")
 
 """
-llm = init_chat_model("google_genai:gemini-2.0-flash")
-
-
-class Feedback(BaseModel):
-    evaluation: Litaral["enough", "not enough"] = Field(
-        description="Decide whether the desctiption is sufficient or not to start the project."
-    )
+Example prompt:
+name:
+elephant image gen bot
+description:
+The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
+data to collect:
+ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc).
 """
-# example prompt
-# name:
-# elephant image gen bot
-# description:
-# The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
-# data to collect:
-# ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc). 
