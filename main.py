@@ -133,7 +133,7 @@ def generateCode(summary: str) -> str:
     return response.content
 
 def save_code_to_disk(code: str, project_name: str, telegram_token: str) -> str: # UNFINISHED
-    project_dir = os.path.abspath(project_name)
+    project_dir = os.path.abspath(f"projects/{project_name}")
     print(f"Creating project files in {str(project_dir)} directory")
     os.makedirs(project_dir, exist_ok=True)
 
