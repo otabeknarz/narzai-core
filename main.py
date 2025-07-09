@@ -1,8 +1,13 @@
+import os
+import shutil
+import subprocess
+import sys
 from dotenv import load_dotenv
 load_dotenv()
 
 from langchain.chat_models import init_chat_model
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+
 
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import AIMessage, HumanMessage
@@ -11,7 +16,6 @@ from langgraph.graph.message import add_messages
 from typing import Annotated, Optional
 from langgraph.types import Command
 from langchain.chat_models import init_chat_model
-from langchain.schema.runnable import RunnableLambda
 from langchain_core.prompts import ChatPromptTemplate
 from typing_extensions import Literal
 from prompts import SYSTEM_PROMPT_START, SYSTEM_PROMPT_SUMMARY
@@ -22,9 +26,6 @@ import json
 # LLM
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 parser = JsonOutputParser()
-
-
-
 
 def merge_questions(existing: list[str], new: list[str]) -> list[str]:
     return existing + new
@@ -39,40 +40,34 @@ def get_cleaned_dict(raw: str) -> dict:
 
 # The overall state of the graph (this is the public state shared across nodes)
 class OverallState(BaseModel):
-    messages: Annotated[list[AnyMessage], add_messages] 
+    messages: Annotated[list[AnyMessage], add_messages]
     name: str
     description: Optional[str] = None
+    telegram_token: Optional[str] = None
     enough: Optional[bool] = None
     summary: Optional[str] = None
     TZ: Optional[str] = None
-    questionsAnswers: Annotated[list[str], merge_questions] 
+    questionsAnswers: Annotated[list[str], merge_questions] = []
     questions: Optional[list[str]] = None
     finished: Optional[bool] = None
 
 def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startProject"]]: 
     description = state.description
-    qna_text = ""
-    if state.questionsAnswers:
-        qna_text = "\n".join(state.questionsAnswers)
+    qna_text = "\n".join(state.questionsAnswers)
     
     prompt = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        SYSTEM_PROMPT_START
-    ),
-    (
-        "human",
-        """
+        ("system", SYSTEM_PROMPT_START),
+        ("human", f"""
         First description: {description}\n\n
         qa_history : {qna_text}
-        """
-    ),
+        """),
     ])
-    print(prompt)
+
+    # print(prompt)
 
     chain = prompt | llm | parser
     result = chain.invoke({"description": description, "qna_text": qna_text})
-    print("Raw LLM output:", result)
+    # print("Raw LLM output:", result)
 
     print(result.get("enough"))
     if result.get("enough")==True:
@@ -92,7 +87,6 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
 
 
 def askFromUser(state: OverallState):
-
     qa_history = state.questionsAnswers or []
     questions = state.questions or []
 
@@ -116,49 +110,147 @@ def startProject(state: OverallState): # UNFINISHED
         }
     )
 
+# Generates codes
+def generateCode(summary: str) -> str:
+    prompt = f"""
+        You are a skilled Python developer specialized in building production-ready Telegram bots using `aiogram`.
+
+        Based on the provided {summary} of requirements, generate a complete project scaffold with the following specifications:
+
+        - **Virtual Environment Setup**: Include instructions or scripts to create and activate a venv.
+        - **Dependencies**: List and install all required packages (e.g., `aiogram`, `python-dotenv`, HTTP clients).
+        - **Configuration**: Use a `.env` file to load `TELEGRAM_BOT_TOKEN` and any API keys via `python-dotenv`.
+        - **File Structure**:
+          - `main.py` as entrypoint
+        - **Core Functionality**:
+          - `/start` and `/help` commands with friendly messages
+        - **Error Handling**: Gracefully handle API failures and user input errors.
+        - **README**: Include usage instructions (how to set up, run, and test the bot).
+
+        **Output**: Return each code file in a separate markdown block labeled with its filename, without additional commentary.
+    """
+    response = llm.invoke(prompt)
+    return response.content
+
+def save_code_to_disk(code: str, project_name: str, telegram_token: str) -> str: # UNFINISHED
+    project_dir = os.path.abspath(project_name)
+    print(f"Creating project files in {str(project_dir)} directory")
+    os.makedirs(project_dir, exist_ok=True)
+
+    # Write .env
+    env_path = os.path.join(project_dir, '.env')
+    print("Writing .env")
+    with open(env_path, 'w') as f:
+        f.write(f"TELEGRAM_BOT_TOKEN={telegram_token}\n")
+
+    # Create venv
+    venv_path = os.path.join(project_dir, 'venv')
+    print(f"Creating virtual environment using {sys.executable}")
+    try:
+        subprocess.run([sys.executable, '-m', 'venv', venv_path], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Venv creation failed: {e}")
+        raise
+
+    # Write requirements
+    requirements = ['aiogram', 'python-dotenv']
+    req_path = os.path.join(project_dir, 'requirements.txt')
+    print("Writing requirements.txt")
+    with open(req_path, 'w') as f:
+        f.write('\n'.join(requirements))
+
+    # Install deps
+    pip_exec = shutil.which('pip', path=os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin'))
+    if not pip_exec:
+        pip_exec = os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin', 'pip')
+    print(f"Installing dependencies using {pip_exec}")
+    proc = subprocess.run([pip_exec, 'install', '-r', req_path], capture_output=True, text=True)
+    print(f"Pip install stdout: {proc.stdout}")
+    print(f"Pip install stderr: {proc.stderr}")
+
+    # Write code files
+    print("Parsing and writing code files from LLM output")
+    matches = re.findall(r"```([^\n]+)\n([\s\S]*?)```", code) # ```filename\n...```
+    entrypoint = None
+    for filename, content in matches:
+        # Clean up the filename and figure out where to save it
+        clean_name = filename.strip()
+        file_path = os.path.join(project_dir, clean_name)
+
+        # Make sure the folder exists before writing the file
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        # Save the code into the file
+        print(f"Writing file: {file_path}")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # Remember the entrypoint (main.py or __main__.py)
+        if clean_name.endswith(("main.py")):
+            entrypoint = file_path
+    return venv_path, entrypoint
+
+def run(venv_path: str, entrypoint: str) -> dict: #UNFINISHED
+    # Determine venv python executable
+    py_exec = os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin', 'python')
+    if not os.path.isfile(py_exec):
+        print(f"Python executable not found in venv at {py_exec}")
+        return {'status': 'error', 'logs': 'python not found in venv'}
+    cmd = [py_exec, entrypoint]
+    print(f"Running bot locally: {' '.join(cmd)}")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stdout, stderr = proc.communicate()
+    print(f"Bot stdout: {stdout}")
+    print(f"Bot stderr: {stderr}")
+    return {'status': 'running' if proc.returncode == 0 else 'error', 'logs': stderr or stdout}
+
+
+def startProject(state: OverallState):
+    code = generateCode(state.summary)
+    venv_path, entrypoint = save_code_to_disk(code, state.name, state.telegram_token or '')
+    run_info = run(venv_path, entrypoint)
+    msg = (
+        f"Workspace '{state.name}' ready at {os.path.abspath(state.name)}\n"
+        f"Venv & deps installed. Bot status: {run_info['status']}"
+    )
+    print(msg)
+    return Command(
+        update={
+            'messages': state.messages + [AIMessage(content=msg)],
+            'finished': True
+        }
+    )
 
 # Build the state graph
 builder = StateGraph(OverallState)
 builder.add_node(createSummary) 
 builder.add_node(askFromUser) 
 builder.add_node(startProject) 
-
-# TIP: really think about the graph structure. i think there is too much going on. connections between nodes makes it ez to go to other notes somehow.
-# UPD: i was right
 builder.add_edge(START, "createSummary")
 builder.add_edge("askFromUser", "createSummary")
 builder.add_edge("startProject", END)
-
 graph = builder.compile()
 
-# Test the graph with a valid input
+if __name__ == "__main__":
+    print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n ")
+    name = input("What is the name of the project? \n\n")
+    description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n")
+    telegram_token = input("\n\nPlease, provide Telegram Bot token? \n\n")
+    result = graph.invoke({"name": name, "description": description, "telegram_token": telegram_token, "questions": [],})
+    for message in result["messages"]:
+       message.pretty_print()
 
-print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n ")
-name = input("What is the name of the project? \n\n")
-description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n")
+    with open("state_graph.png", "wb") as f:
+        f.write(graph.get_graph().draw_mermaid_png())
+    print("Graph Image generated.")
 
-
-result = graph.invoke({"name": name, "description": description, "questions": [],})
-for message in result["messages"]:
-   message.pretty_print()
-
-with open("state_graph.png", "wb") as f:
-    f.write(graph.get_graph().draw_mermaid_png())
-print("Graph Image generated.")
 
 """
-llm = init_chat_model("google_genai:gemini-2.0-flash")
-
-
-class Feedback(BaseModel):
-    evaluation: Litaral["enough", "not enough"] = Field(
-        description="Decide whether the desctiption is sufficient or not to start the project."
-    )
+Example prompt:
+name:
+elephant image gen bot
+description:
+The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
+data to collect:
+ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc).
 """
-# example prompt
-# name:
-# elephant image gen bot
-# description:
-# The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
-# data to collect:
-# ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc). 
