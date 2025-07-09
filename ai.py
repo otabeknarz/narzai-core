@@ -1,53 +1,85 @@
-from google.genai import Client
-from google.genai.types import GenerateContentConfig, GenerateContentResponse
-import json
-import re
-
-from functools import lru_cache
-import os
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chains import LLMChain
+from langchain import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_API_KEY=os.getenv("GEMINI_API_KEY")
+code_system_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are a Python coding assistant with expertise in Aiogram 3, Telegram bot development, and SQLite using SQLAlchemy.
+
+Follow these instructions carefully:
+
+You must strictly use Aiogram version 3 for all Telegram bot-related code.
+
+If database access is needed, use SQLite with SQLAlchemy ORM.
+
+Your code should be organized following this exact project structure:
+
+app.py                     # Main entry point to run the bot
+db.sqlite3                 # DB if needed
+/modules/
+├── functions.py           # Reusable utility functions
+├── settings.py            # Bot token, env keys, config flags
+├── keyboards.py           # InlineKeyboard and ReplyKeyboard buttons
+├── states.py              # FSM states for registration or other flows
+└── handlers.py            # All user message/callback handlers
+Always:
+
+Write complete and functional code with all necessary imports.
+
+Include detailed docstrings or comments explaining each function or class.
+
+Prefer reusable code: write helper functions or classes where appropriate.
+
+Make sure app.py initializes the dispatcher, bot, handlers, and starts polling.
+
+If needed, create SQLAlchemy Base, models, and session management code.
+
+Ensure the bot reads .env values from settings.py if tokens or URLs are needed.
+
+Your output must always follow this structure:
+
+Short description of what the code does.
+
+List of imports.
+
+Complete code block (structured into appropriate files).
+
+Never use old versions of Aiogram or outdated practices. If debugging is needed, write explanations clearly and suggest corrected code.""",
+        ),
+        (
+            "placeholder", "{messages}"
+        ),
+        
+    ]
+)
+
+llm_model_name = "gemini-2.0-flash"
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
+
+code_agent_chain = code_system_prompt or llm.with_structured_output(code)
 
 
-def get_cleaned_dict(raw: str) -> dict:
-    raw_clean = re.sub(r"^```json|```$", "", raw.strip(), flags=re.IGNORECASE).strip()
-    try:
-        return json.loads(raw_clean)
-    except json.JSONDecodeError:
-        raw_clean = raw_clean.replace("'", '"')
-        return json.loads(raw_clean)
 
-
-class AI:
-    def __init__(self) -> None:
-        self.gemini_client = Client(
-            api_key=GEMINI_API_KEY
+def get_llm_response(system_prompt, query):
+    prompt = PromptTemplate(
+            input_variable=['questions'],
+            template=system_prompt,
         )
-
-    def gemini_call(self, model: str, user_prompt: str, system_prompt: str) -> GenerateContentResponse:
-        return self.gemini_client.models.generate_content(
-            model=model,
-            contents=user_prompt,
-            config=GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.7
-            )
-        )
-
-    def gemini_call_json(self, model: str, user_prompt: str, system_prompt: str) -> dict:
-        response = self.gemini_call(model, user_prompt, system_prompt)
-        json_response = get_cleaned_dict(response.text or "{}")
-        return json_response
+    chain = LLMChain(llm=llm, prompt=prompt)
+    response = chain.invoke({"questions": query})
+    return response.get("text")
 
 
-    def gpt_call(self, model: str, user_prompt: str, system_prompt: str) -> None:
-        pass
+system_prompt = """
+Answer the following questions: {questions}
+"""
 
-
-@lru_cache
-def get_ai() -> AI:
-    return AI()
-
+query = input("type your question: ")
+response = get_llm_response(system_prompt=system_prompt, query=query)
+print(response)
