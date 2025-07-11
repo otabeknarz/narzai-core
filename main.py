@@ -18,7 +18,7 @@ from langgraph.types import Command
 from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
 from typing_extensions import Literal
-from prompts import SYSTEM_PROMPT_START, SYSTEM_PROMPT_SUMMARY
+from prompts import SYSTEM_PROMPT_START, SYSTEM_PROMPT_GENERATE
 from langchain_core.output_parsers.json import JsonOutputParser
 import re
 import json
@@ -74,6 +74,7 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
         goto = "startProject" 
     else: 
         goto = "askFromUser"
+    
 
     return Command(
         update={
@@ -111,28 +112,22 @@ def startProject(state: OverallState): # UNFINISHED
     )
 
 # Generates codes
-def generateCode(summary: str) -> str:
-    prompt = f"""
-        You are a skilled Python developer specialized in building production-ready Telegram bots using `aiogram`.
+def generateCode(TZ: str) -> str:
 
-        Based on the provided {summary} of requirements, generate a complete project scaffold with the following specifications:
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT_GENERATE),
+        ("human", f"""
+        Description: {TZ}
+        """),
+    ])
+    print(TZ)
+    chain = prompt | llm | parser
+    response = chain.invoke({"TZ": TZ})
+    print("LLM response:", response)
+    print(type(response))
+    return response
 
-        - **Virtual Environment Setup**: Include instructions or scripts to create and activate a venv.
-        - **Dependencies**: List and install all required packages (e.g., `aiogram`, `python-dotenv`, HTTP clients).
-        - **Configuration**: Use a `.env` file to load `TELEGRAM_BOT_TOKEN` and any API keys via `python-dotenv`.
-        - **File Structure**:
-          - `main.py` as entrypoint
-        - **Core Functionality**:
-          - `/start` and `/help` commands with friendly messages
-        - **Error Handling**: Gracefully handle API failures and user input errors.
-        - **README**: Include usage instructions (how to set up, run, and test the bot).
-
-        **Output**: Return each code file in a separate markdown block labeled with its filename, without additional commentary.
-    """
-    response = llm.invoke(prompt)
-    return response.content
-
-def save_code_to_disk(code: str, project_name: str, telegram_token: str) -> str: # UNFINISHED
+def save(code: dict, project_name: str, telegram_token: str) -> str: # UNFINISHED
     project_dir = os.path.abspath(f"projects/{project_name}")
     print(f"Creating project files in {str(project_dir)} directory")
     os.makedirs(project_dir, exist_ok=True)
@@ -152,27 +147,12 @@ def save_code_to_disk(code: str, project_name: str, telegram_token: str) -> str:
         print(f"Venv creation failed: {e}")
         raise
 
-    # Write requirements
-    requirements = ['aiogram', 'python-dotenv']
-    req_path = os.path.join(project_dir, 'requirements.txt')
-    print("Writing requirements.txt")
-    with open(req_path, 'w') as f:
-        f.write('\n'.join(requirements))
-
-    # Install deps
-    pip_exec = shutil.which('pip', path=os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin'))
-    if not pip_exec:
-        pip_exec = os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin', 'pip')
-    print(f"Installing dependencies using {pip_exec}")
-    proc = subprocess.run([pip_exec, 'install', '-r', req_path], capture_output=True, text=True)
-    print(f"Pip install stdout: {proc.stdout}")
-    print(f"Pip install stderr: {proc.stderr}")
 
     # Write code files
     print("Parsing and writing code files from LLM output")
-    matches = re.findall(r"```([^\n]+)\n([\s\S]*?)```", code) # ```filename\n...```
+    
     entrypoint = None
-    for filename, content in matches:
+    for filename, file_content in code.items():
         # Clean up the filename and figure out where to save it
         clean_name = filename.strip()
         file_path = os.path.join(project_dir, clean_name)
@@ -183,14 +163,20 @@ def save_code_to_disk(code: str, project_name: str, telegram_token: str) -> str:
         # Save the code into the file
         print(f"Writing file: {file_path}")
         with open(file_path, "w", encoding="utf-8") as f:
-            f.write(content)
+            f.write(file_content.strip())
 
-        # Remember the entrypoint (main.py or __main__.py)
+        # Remember the entrypoint 
         if clean_name.endswith(("main.py")):
             entrypoint = file_path
     return venv_path, entrypoint
 
-def run(venv_path: str, entrypoint: str) -> dict: #UNFINISHED
+def run(venv_path: str, entrypoint: str, project_name: str) -> dict: #UNFINISHED
+    # Install deps
+    pip_exec = os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin', 'pip')
+    print(f"Installing dependencies using {pip_exec}")
+    proc = subprocess.run([pip_exec, 'install', '-r', os.path.abspath(f"projects/{project_name}/requirements.txt")], capture_output=True, text=True)
+    print(f"Pip install stdout: {proc.stdout}")
+    print(f"Pip install stderr: {proc.stderr}")
     # Determine venv python executable
     py_exec = os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin', 'python')
     if not os.path.isfile(py_exec):
@@ -206,9 +192,9 @@ def run(venv_path: str, entrypoint: str) -> dict: #UNFINISHED
 
 
 def startProject(state: OverallState):
-    code = generateCode(state.summary)
-    venv_path, entrypoint = save_code_to_disk(code, state.name, state.telegram_token or '')
-    run_info = run(venv_path, entrypoint)
+    code = generateCode(state.TZ)
+    venv_path, entrypoint = save(code, state.name, state.telegram_token or '')
+    run_info = run(venv_path, entrypoint, state.name)
     msg = (
         f"Workspace '{state.name}' ready at {os.path.abspath(state.name)}\n"
         f"Venv & deps installed. Bot status: {run_info['status']}"
