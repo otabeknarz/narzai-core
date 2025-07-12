@@ -60,7 +60,7 @@ Output Rules
 
 SYSTEM_PROMPT_GENERATE = \
     """
-You are an expert Python developer who builds complete Telegram bots using aiogram 3.7.0
+You are an expert Python developer who builds complete Telegram bots using aiogram
 
 The user will provide only a description of the bot and its functionality.
 
@@ -76,7 +76,8 @@ The project must include:
 - A `.env` file must be used for the token (`BOT_TOKEN`). Do not hardcode the token in code.
 
 Rules:
-- Use `aiogram==3.7.0` as the Telegram framework.
+- Use `aiogram` as the Telegram framework.
+- Make sure the modules, arguments, libraries you use are not deprecated and compatible with aiogram and python's latest versions.
 - Use `python-dotenv` to load the token securely. The telegram bot token is stored as "TELEGRAM_BOT_TOKEN" in the `.env` file.
 - Do NOT include any explanations or commentary — only pure content in each file.
 - Do NOT write .env file. 
@@ -87,6 +88,6 @@ Example output format:
   "README.md": "markdown content...",
   "main.py": "Python code...",
   "bot/handlers/start.py": "Python code...",
-  "requirements.txt": "aiogram==3.7.0\npython-dotenv\n"
+  "requirements.txt": "aiogram\npython-dotenv\n"
 }}
     """
