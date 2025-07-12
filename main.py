@@ -1,9 +1,6 @@
 import os
-import shutil
 import subprocess
 import sys
-from dotenv import load_dotenv
-load_dotenv()
 
 from langchain.chat_models import init_chat_model
 from pydantic import BaseModel
@@ -20,7 +17,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from typing_extensions import Literal
 from prompts import SYSTEM_PROMPT_START, SYSTEM_PROMPT_GENERATE
 from langchain_core.output_parsers.json import JsonOutputParser
-from functions import get_cleaned_dict, merge_questions
+from functions import get_cleaned_project_name, merge_questions
+from dotenv import load_dotenv
+load_dotenv()
 
 # LLM
 llm = init_chat_model("google_genai:gemini-2.0-flash")
@@ -31,13 +30,13 @@ parser = JsonOutputParser()
 # The overall state of the graph (this is the public state shared across nodes)
 class OverallState(BaseModel):
     messages: Annotated[list[AnyMessage], add_messages]
-    name: str
+    name: str 
     description: Optional[str] = None
     telegramToken: Optional[str] = None
     enough: Optional[bool] = None
     summary: Optional[str] = None
     TZ: Optional[str] = None
-    fullCode: Optional[str] = None 
+    fullCode: Optional[dict] = None 
     questionsAnswers: Annotated[list[str], merge_questions] = []
     questions: Optional[list[str]] = None
     finished: Optional[str] = None
@@ -93,7 +92,7 @@ def askFromUser(state: OverallState):
     return {"questionsAnswers": qa_history}
 
 
-def startProject(state: OverallState): # UPDATED: deleted the duplicate of it, moved venv and .env creation code there
+def startProject(state: OverallState):
     project_name = state.name 
     telegram_token = state.telegramToken
 
@@ -116,7 +115,7 @@ def startProject(state: OverallState): # UPDATED: deleted the duplicate of it, m
         raise
     
 
-def generateCode(state: OverallState) -> OverallState: # UPDATED: now it is a node; It is NOT working properly. Debug pls!!!
+def generateCode(state: OverallState) -> OverallState:
     TZ = state.TZ
 
     prompt = ChatPromptTemplate.from_messages([
@@ -132,10 +131,14 @@ def generateCode(state: OverallState) -> OverallState: # UPDATED: now it is a no
     print(type(fullCode))
     return {"fullCode" : fullCode}
 
-def save(state: OverallState) -> OverallState: # UPDATED: now it is a node
+def save(state: OverallState) -> OverallState: 
     code = state.fullCode 
-    project_name = state.name 
+    project_name = get_cleaned_project_name(state.name)
+    # we gotta be more restrictive here 
+    # for example user can but symbols here, our program generates files with that name
+    # could be error when generating files or directories with extra symbols as their names
     project_dir = os.path.abspath(os.path.join("projects", project_name))
+
     
     for filename, file_content in code.items():
         clean_name = filename.strip()
@@ -148,29 +151,33 @@ def save(state: OverallState) -> OverallState: # UPDATED: now it is a node
             f.write(file_content.strip())
  
 
-def run(state: OverallState) -> OverallState: #UNFINISHED
+def run(state: OverallState) -> OverallState:
+    project_name = state.name
     project_dir = os.path.abspath(os.path.join("projects", project_name))
     venv_path = os.path.join(project_dir, 'venv')
     entrypoint = os.path.join(project_dir, 'main.py')
 
     # Install deps
     pip_exec = os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin', 'pip')
+    if not os.path.isfile(pip_exec+'.exe'):
+        print(f"Pip executable not found in venv at {pip_exec}")
+        return {'status': 'error', 'logs': 'pip not found in venv'}
     print(f"Installing dependencies using {pip_exec}")
     proc = subprocess.run([pip_exec, 'install', '-r', os.path.abspath(f"projects/{project_name}/requirements.txt")], capture_output=True, text=True)
     print(f"Pip install stdout: {proc.stdout}")
     print(f"Pip install stderr: {proc.stderr}")
+    
     # Determine venv python executable
     py_exec = os.path.join(venv_path, 'Scripts' if os.name=='nt' else 'bin', 'python')
-    if not os.path.isfile(py_exec):
+    if not os.path.isfile(py_exec+'.exe'):
         print(f"Python executable not found in venv at {py_exec}")
         return {'status': 'error', 'logs': 'python not found in venv'}
     cmd = [py_exec, entrypoint]
     print(f"Running bot locally: {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    stdout, stderr = proc.communicate()
-    print(f"Bot stdout: {stdout}")
-    print(f"Bot stderr: {stderr}")
-    return {'finished': 'yes' if proc.returncode == 0 else 'error', 'logs': stderr or stdout}
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    print(f"Bot stdout: {proc.stdout}")
+    print(f"Bot stderr: {proc.stderr}")
+    return {'finished': 'yes' if proc.returncode == 0 else 'error', 'logs': proc.stderr or proc.stdout}
 
 
 # Build the state graph
@@ -209,7 +216,7 @@ Example prompt:
 name:
 elephant image gen bot
 description:
-The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
-data to collect:
-ideally, just name, age, and telegram_id. decide on your own for other information. just react to any info from user with free image of elephant animal (maybe from wikipedia or etc).
+ The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
+bot_token: 5845005240:AAEp-dcOK9WhORoOTPmFjhMaJ12iyshHz6E (i am gonna revoke it anyway. github guys, don't get excited)
+bot username: @credentis_bot
 """
