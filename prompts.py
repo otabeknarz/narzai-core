@@ -1,5 +1,4 @@
-SYSTEM_PROMPT_START = \
-"""
+SYSTEM_PROMPT_START = """
 You are an expert *Telegram-Bot Requirements Agent*.
 
 Each time you are invoked you receive the following inputs:
@@ -58,8 +57,7 @@ Output Rules
 - use double curly braces to define dictionary values in the JSON.
 """
 
-SYSTEM_PROMPT_GENERATE = \
-    """
+SYSTEM_PROMPT_GENERATE = """
 You are an expert Python developer who builds complete Telegram bots using aiogram
 
 The user will provide only a description of the bot and its functionality.
