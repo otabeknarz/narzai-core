@@ -1,6 +1,8 @@
 import os
 import subprocess
 import sys
+import docker
+import uuid
 
 from langchain.chat_models import init_chat_model
 from pydantic import BaseModel
@@ -24,6 +26,7 @@ load_dotenv()
 # LLM
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 parser = JsonOutputParser()
+docker_client = docker.from_env()
 
 
 

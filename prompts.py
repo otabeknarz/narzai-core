@@ -69,6 +69,7 @@ Your task is to return a complete and functional bot project in **JSON format**,
 - Each value is the full content of that file, containing only code or markdown — no extra explanation or formatting.
 
 The project must include:
+- `"Dockerfile"` - a dockerfile to run new generated bot project with .env file included
 - `"README.md"` — a markdown file with a clear overview and instructions to set up and run the bot.
 - `"main.py"` — the entry point of the bot.
 - `"requirements.txt"` — containing all required Python dependencies, one per line.
