@@ -180,7 +180,27 @@ def run(state: OverallState) -> OverallState:
     proc = subprocess.run(cmd, capture_output=True, text=True)
     print(f"Bot stdout: {proc.stdout}")
     print(f"Bot stderr: {proc.stderr}")
-    return {'finished': 'yes' if proc.returncode == 0 else 'error', 'logs': proc.stderr or proc.stdout}
+
+    needs_debug = input("Do you need to debug the bot? (yes/no) ").strip().lower() == 'yes'
+    goto = "run"
+    if needs_debug:
+        goto = "debug"
+        
+    return Command(
+        update={
+            "debug": needs_debug,
+            "questions": result.get("questions"),
+            "summary": result.get("summary"),
+            "TZ": result.get("TZ"),
+        },
+        goto=goto,
+    )
+
+
+def debug(state: OverallState) -> OverallState: # debugging the existing code
+    code = state.fullCode
+    print("Debugging the following code:")
+    # UNFINISHED
 
 
 # Build the state graph
@@ -189,6 +209,7 @@ builder.add_node(createSummary)
 builder.add_node(askFromUser) 
 builder.add_node(startProject) 
 builder.add_node(generateCode)
+builder.add_node(debug) # added debug node
 builder.add_node(save)
 builder.add_node(run)
 
@@ -197,6 +218,7 @@ builder.add_edge("askFromUser", "createSummary")
 builder.add_edge("startProject", "generateCode")
 builder.add_edge("generateCode", "save")
 builder.add_edge("save", "run")
+builder.add_edge("debug", "run") # if debug is triggered, after debugging we run the bot directly for loop effect
 builder.add_edge("run", END)
 graph = builder.compile()
 
