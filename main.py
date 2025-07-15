@@ -19,7 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from typing_extensions import Literal
 from prompts import SYSTEM_PROMPT_START, SYSTEM_PROMPT_GENERATE
 from langchain_core.output_parsers.json import JsonOutputParser
-from functions import get_cleaned_project_name, merge_questions
+from functions import merge_questions, get_username
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -136,7 +136,8 @@ def generateCode(state: OverallState) -> OverallState:
 
 def save(state: OverallState) -> OverallState: 
     code = state.fullCode 
-    project_name = get_cleaned_project_name(state.name)
+    project_name = get_username(state.telegramToken)
+        
     # we gotta be more restrictive here 
     # for example user can but symbols here, our program generates files with that name
     # could be error when generating files or directories with extra symbols as their names
