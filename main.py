@@ -143,6 +143,12 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
         
     project_dir = os.path.abspath(os.path.join("projects", project_id, telegram_bot_username))
 
+    # read files and copy into code
+    file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
+    code = {}
+    for filename in file_agent.get_project_structure().keys():
+        code[filename] = file_agent.read_file(filename)
+
     # Install deps
     print("Creating virtual environment")
     if not state.is_docker_created:
@@ -161,23 +167,24 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
 
     time.sleep(3)
     logs = get_logs(project_name=telegram_bot_username)
-    if logs:
+
+    if logs: # theoretically, there could be logs before the activation of the docker container
         print("Reading logs...")
-        description = ChatPromptTemplate.from_messages(
+        prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", SYSTEM_PROMPT_DESCRIBE),
                 ("human", f"""
-                logs : {logs}
+                logs: {logs}
+                code: {code}
                 """),
             ]
         )
-        chain = description | llm | parser
-        result = chain.invoke({"logs": logs})
-        
+        description = prompt | llm | parser
+        result = description.invoke({"logs": logs, "code": code})
+
         return Command(
             update={
                 "suggestion_summary": result.get("suggestion_summary"),
-                "summary": state.summary,
                 "is_docker_created": True,
             },
             goto="debug" if result.get("has_errors") else "__end__",
@@ -193,7 +200,7 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
             "TZ": result.get("TZ"),
             "is_docker_created": True,
         },
-        goto=goto,
+        goto="__end__",
     )
 
 
@@ -205,12 +212,20 @@ def debug(state: OverallState):
     suggestion_summary = state.suggestion_summary
     user_suggestion = state.user_suggestion
 
-    qna_text = "\n".join(state.questionsAnswers)
+    # read files and copy into code dictionary
+    file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
+    code = {}
+    for filename in file_agent.get_project_structure().keys():
+        code[filename] = file_agent.read_file(filename)
+
+    user_suggestion = input("Please provide your suggestion: ")
+
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_DEBUG),
             ("human", f"""
-            logs : {logs}
+            logs: {logs}
+            code: {code}
             suggestion_summary: {suggestion_summary}
             user_suggestion: {user_suggestion}
             """),
@@ -218,14 +233,12 @@ def debug(state: OverallState):
     )
 
     chain = prompt | llm | parser
-    result = chain.invoke({"qna_text": qna_text})
-    print(result)
+    debugged_code = chain.invoke({"logs": logs, "code": code, "suggestion_summary": suggestion_summary, "user_suggestion": user_suggestion})
+    print(debugged_code)
 
-    # read files and copy into code
-    file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
-    code = {}
-    for filename in file_agent.get_project_structure().keys():
-        code[filename] = file_agent.read_file(filename)
+    # save changes
+    for filename, file_content in debugged_code.items():
+        file_agent.write_file(filename, file_content)
 
     return Command(
         update={
@@ -234,7 +247,7 @@ def debug(state: OverallState):
             "TZ": result.get("TZ"),
             "is_docker_created": True,
         },
-        goto="generate",
+        goto="run",
     )
 
 
