@@ -109,7 +109,7 @@ def startProject(state: OverallState):
 
     # writing .env file
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
-    file_agent.write_to_file(".env/TELEGRAM_BOT_TOKEN", telegram_token)
+    file_agent.write_to_file(".env", telegram_token)
 
 
 def generate(state: OverallState) -> None:
@@ -146,7 +146,7 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
     # read files and copy into code
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
     code = {}
-    for filename in file_agent.get_project_structure().keys():
+    for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
 
     # Install deps
@@ -215,7 +215,7 @@ def debug(state: OverallState):
     # read files and copy into code dictionary
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
     code = {}
-    for filename in file_agent.get_project_structure().keys():
+    for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
 
     user_suggestion = input("Please provide your suggestion: ")
