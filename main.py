@@ -1,11 +1,10 @@
 import os
 import docker
 import time
+import uuid
 
 from langchain.chat_models import init_chat_model
 from pydantic import BaseModel
-
-
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages import AnyMessage
@@ -15,15 +14,17 @@ from langgraph.types import Command
 from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
 from typing_extensions import Literal
-from prompts import (
-    SYSTEM_PROMPT_START,
-    SYSTEM_PROMPT_GENERATE,
-    SYSTEM_PROMPT_WRITE_CODE,
-)
 from langchain_core.output_parsers.json import JsonOutputParser
 from functions import merge_questions, get_username
 from dotenv import load_dotenv
 
+from file_tools import FileAgent
+from prompts import (
+    SYSTEM_PROMPT_START,
+    SYSTEM_PROMPT_GENERATE,
+    SYSTEM_PROMPT_DESCRIBE,
+    SYSTEM_PROMPT_DEBUG
+)
 from docker_client import (
     initialize_project,
     run_project,
@@ -39,23 +40,22 @@ llm = init_chat_model("google_genai:gemini-2.0-flash")
 parser = JsonOutputParser()
 docker_client = docker.from_env()
 
-
-# The overall state of the graph (this is the public state shared across nodes)
+# State
 class OverallState(BaseModel):
-    messages: Annotated[list[AnyMessage], add_messages]
     name: str
+    project_id: str = str(uuid.uuid4().hex[:8])
     telegram_bot_username: Optional[str] = None
-    description: Optional[str] = None
     telegramToken: Optional[str] = None
-    enough: Optional[bool] = None
+    description: Optional[str] = None
     summary: Optional[str] = None
     TZ: Optional[str] = None
+    messages: Annotated[list[AnyMessage], add_messages]
     questionsAnswers: Annotated[list[str], merge_questions] = []
     questions: Optional[list[str]] = None
+    user_suggestion: Optional[str] = None
+    suggestion_summary: Optional[str] = None
+    enough: Optional[bool] = False
     is_docker_created: bool = False
-    problem_from_user: Optional[str] = None
-    problem_summary: Optional[str] = None
-    finished: Optional[str] = None
 
 
 def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startProject"]]:
@@ -73,16 +73,8 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
         ]
     )
 
-    # print(prompt)
-
     chain = prompt | llm | parser
     result = chain.invoke({"description": description, "qna_text": qna_text})
-    # print("Raw LLM output:", result)
-
-    if result.get("enough") is True:
-        goto = "startProject"
-    else:
-        goto = "askFromUser"
 
     return Command(
         update={
@@ -91,11 +83,11 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
             "summary": result.get("summary"),
             "TZ": result.get("TZ"),
         },
-        goto=goto,
+        goto="startProject" if result.get("enough") is True else "askFromUser",
     )
 
 
-def askFromUser(state: OverallState):
+def askFromUser(state: OverallState) -> OverallState:
     qa_history = state.questionsAnswers or []
     questions = state.questions or []
 
@@ -105,7 +97,7 @@ def askFromUser(state: OverallState):
         answer = input(question + "\n")
         qa_history.append(f"{question} {answer}")
 
-    print("\n\nQuesitons finished, thanks for asnwering\n\n")
+    print("\n\nQuestions finished, thanks for answering\n\n")
 
     return {"questionsAnswers": qa_history}
 
@@ -113,19 +105,17 @@ def askFromUser(state: OverallState):
 def startProject(state: OverallState):
     telegram_token = state.telegramToken
     telegram_bot_username = state.telegram_bot_username
+    project_id = state.project_id
 
-    project_dir = os.path.abspath(f"projects/{telegram_bot_username}")
-    print(f"Creating project files in {str(telegram_bot_username)} directory")
-    os.makedirs(project_dir, exist_ok=True)
-
-    env_path = os.path.join(project_dir, ".env")
-    print("Writing .env")
-    with open(env_path, "w") as f:
-        f.write(f"TELEGRAM_BOT_TOKEN={telegram_token}\n")
+    # writing .env file
+    file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
+    file_agent.write_to_file(".env/TELEGRAM_BOT_TOKEN", telegram_token)
 
 
-def generate_and_save(state: OverallState) -> None:
-    # if debug is triggered, we don't generate code again
+def generate(state: OverallState) -> None:
+    telegram_bot_username = state.telegram_bot_username
+    project_id = state.project_id
+
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_GENERATE),
@@ -136,26 +126,28 @@ def generate_and_save(state: OverallState) -> None:
         ]
     )
     chain = prompt | llm | parser
-
     code = chain.invoke({"TZ": state.TZ})
+    
+    print("code:", code)
 
     # save
-    project_dir = os.path.abspath(os.path.join("projects", str(state.telegram_bot_username)))
-
+    file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
     for filename, file_content in code.items():
-        clean_name = filename.strip()
-        file_path = os.path.join(project_dir, clean_name)
-
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-        print(f"Writing file: {file_path}")
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(file_content.strip())
+        file_agent.write_to_file(filename.strip(), file_content.strip())
+    print("Project files generated successfully.")
 
 
 def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
-    telegram_bot_username = str(state.telegram_bot_username)
-    project_dir = os.path.abspath(os.path.join("projects", telegram_bot_username))
+    telegram_bot_username = state.telegram_bot_username
+    project_id = state.project_id
+        
+    project_dir = os.path.abspath(os.path.join("projects", project_id, telegram_bot_username))
+
+    # read files and copy into code
+    file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
+    code = {}
+    for filename in file_agent.get_project_structure().keys():
+        code[filename] = file_agent.read_file(filename)
 
     # Install deps
     print("Creating virtual environment")
@@ -174,79 +166,80 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
         )
 
     time.sleep(3)
-    logs = get_logs(telegram_bot_username)
-    message = f"""
-    Here are the logs of the docker container running a telegram bot in python (only aiogram).
-    Are the logs fine or is there any error?
-    GIVE THE RESULT STRICT JSON FORMAT WITH ONLY THE FIELDS: need_to_debug (bool), problem_summary (str). DO NOT INCLUDE ANY ADDITIONAL FIELDS.
-    {logs}
-    """
-    qna_text = "\n".join(state.questionsAnswers)
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", message),
-            ("human", f"""
-            qa_history : {qna_text}
-            """),
-        ]
-    )
-    state.is_docker_created = True
+    logs = get_logs(project_name=telegram_bot_username)
 
-    chain = prompt | llm | parser
-    result = chain.invoke({"qna_text": qna_text})
-    if result.get("need_to_debug"):
-        print(
-            f"I can see the error in the logs, i'm fixing it\n{result.get('problem_summary')}"
+    if logs: # theoretically, there could be logs before the activation of the docker container
+        print("Reading logs...")
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", SYSTEM_PROMPT_DESCRIBE),
+                ("human", f"""
+                logs: {logs}
+                code: {code}
+                """),
+            ]
         )
+        description = prompt | llm | parser
+        result = description.invoke({"logs": logs, "code": code})
+
         return Command(
             update={
-                "problem_summary": result.get("problem_summary"),
-                "questions": result.get("questions"),
-                "summary": result.get("summary"),
-                "TZ": result.get("TZ"),
+                "suggestion_summary": result.get("suggestion_summary"),
                 "is_docker_created": True,
             },
-            goto="debug",
+            goto="debug" if result.get("has_errors") else "__end__",
         )
 
-    feedback = input(f"So your bot {telegram_bot_username} is working check it and ask me any updates or errors\nIf everything is working fine type (finish)")
+    # feedback = input(f"{telegram_bot_username} is updated! If you like the changes, type (finish)")
 
-    goto = "debug" if feedback.strip().lower() != "finish" else "__end__"
+    # goto = "debug" if feedback.strip().lower() != "finish" else "__end__"
 
     return Command(
         update={
-            "problem_from_user": feedback,
-            "questions": result.get("questions"),
             "summary": result.get("summary"),
             "TZ": result.get("TZ"),
             "is_docker_created": True,
         },
-        goto=goto,
+        goto="__end__",
     )
 
 
 def debug(state: OverallState):
-    project_name = str(state.telegram_bot_username)
-    logs = get_logs(project_name=project_name)
-    problem_from_user = state.problem_from_user or ""
-    problem_summary = state.problem_summary or ""
+    telegram_bot_username = state.telegram_bot_username
+    project_id = state.project_id
 
-    qna_text = "\n".join(state.questionsAnswers)
+    logs = get_logs(project_name=telegram_bot_username)
+    suggestion_summary = state.suggestion_summary
+    user_suggestion = state.user_suggestion
+
+    # read files and copy into code dictionary
+    file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
+    code = {}
+    for filename in file_agent.get_project_structure().keys():
+        code[filename] = file_agent.read_file(filename)
+
+    user_suggestion = input("Please provide your suggestion: ")
+
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", SYSTEM_PROMPT_WRITE_CODE),
+            ("system", SYSTEM_PROMPT_DEBUG),
             ("human", f"""
-            qa_history : {qna_text}
-            logs : {logs}
-            problem_summary (may be blank) : {problem_summary}
-            info from user (may be blank) : {problem_from_user}
+            logs: {logs}
+            code: {code}
+            suggestion_summary: {suggestion_summary}
+            user_suggestion: {user_suggestion}
             """),
         ]
     )
 
     chain = prompt | llm | parser
-    result = chain.invoke({"qna_text": qna_text})
-    print(result)
+    debugged_code = chain.invoke({"logs": logs, "code": code, "suggestion_summary": suggestion_summary, "user_suggestion": user_suggestion})
+    print(debugged_code)
+
+    # save changes
+    for filename, file_content in debugged_code.items():
+        file_agent.write_file(filename, file_content)
+
     return Command(
         update={
             "questions": result.get("questions"),
@@ -254,7 +247,7 @@ def debug(state: OverallState):
             "TZ": result.get("TZ"),
             "is_docker_created": True,
         },
-        goto="generate_and_save",
+        goto="run",
     )
 
 
@@ -263,26 +256,22 @@ builder = StateGraph(OverallState)
 builder.add_node(createSummary)
 builder.add_node(askFromUser)
 builder.add_node(startProject)
-builder.add_node(generate_and_save)
+builder.add_node(generate)
 builder.add_node(debug)
 builder.add_node(run)
 
 builder.add_edge(START, "createSummary")
 builder.add_edge("askFromUser", "createSummary")
-builder.add_edge("startProject", "generate_and_save")
-builder.add_edge("generate_and_save", "run")
-builder.add_edge("debug", "generate_and_save")  # if debug is triggered, after debugging we run the bot directly for loop effect
+builder.add_edge("startProject", "generate")
+builder.add_edge("generate", "run")
+builder.add_edge("debug", "run") 
 builder.add_edge("run", END)
 graph = builder.compile()
 
 if __name__ == "__main__":
-    print(
-        "Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n "
-    )
+    print("Hey, I am Bot Builder and I am here to help you to build your bot! To start, you need to give me some information. \n ")
     name = input("What is the name of the project? \n\n")
-    description = input(
-        "\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n"
-    )
+    description = input("\n\nGive me the description of the project. Include the workflow of the bot, the required information that bot needs to collect, and main objective of the bot. The more details you provide, the better results you will receive. \n\n")
 
 
     telegram_token = input("\n\nPlease, provide Telegram Bot token? \n\n")
