@@ -64,11 +64,7 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_START),
-            ("human",
-            f"""
-            First description: {description}\n\n
-            qa_history : {qna_text}
-            """),
+            ("human", f"First description: {description}\n\nqa_history : {qna_text}"),
         ]
     )
 
@@ -118,10 +114,7 @@ def generate(state: OverallState) -> None:
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_GENERATE),
-            ("human",
-            f"""
-            Description: {state.TZ}
-            """),
+            ("human", f"Description: {state.TZ}"),
         ]
     )
     chain = prompt | llm | parser
@@ -147,7 +140,6 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
     code = {}
     for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
-    code = '{' + str(code) + '}'
 
     # Install deps
     print("Creating virtual environment")
@@ -172,11 +164,7 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
     prompt = ChatPromptTemplate(
         [
             ("system", SYSTEM_PROMPT_DESCRIBE),
-            ("human", 
-            f"""
-            Logs: {logs}\n\n
-            Codebase: {code}
-            """),
+            ("human", f"Logs: {logs}\n\nCodebase: {code}"),
         ]
     )
     description = prompt | llm | parser
@@ -205,20 +193,13 @@ def debug(state: OverallState):
     code = {}
     for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
-    code = '{' + str(code) + '}'
 
     user_suggestion = input("Please provide your suggestion: ")
 
     prompt = ChatPromptTemplate(
         [
             ("system", SYSTEM_PROMPT_DEBUG),
-            ("human", 
-            f"""
-            Logs: {logs}\n\n
-            Codebase: {code}\n\n
-            Suggestion Summary: {suggestion_summary}\n\n
-            User Suggestion: {user_suggestion}
-            """),
+            ("human", f"Logs: {logs}\n\nCodebase: {code}\n\nSuggestion Summary: {suggestion_summary}\n\nSuggestion: {user_suggestion}"),
         ]
     )
 
