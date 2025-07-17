@@ -109,7 +109,7 @@ def startProject(state: OverallState):
 
     # writing .env file
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
-    file_agent.write_to_file(".env", telegram_token)
+    file_agent.write_to_file(".env", f"TELEGRAM_BOT_TOKEN={telegram_token}")
 
 
 def generate(state: OverallState) -> None:
@@ -137,7 +137,7 @@ def generate(state: OverallState) -> None:
     print("Project files generated successfully.")
 
 
-def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
+def run(state: OverallState) -> Command[Literal["debug"]]:
     telegram_bot_username = state.telegram_bot_username
     project_id = state.project_id
         
@@ -168,40 +168,28 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
     time.sleep(3)
     logs = get_logs(project_name=telegram_bot_username)
 
-    if logs: # theoretically, there could be logs before the activation of the docker container
-        print("Reading logs...")
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", SYSTEM_PROMPT_DESCRIBE),
-                ("human", f"""
-                logs: {logs}
-                code: {code}
-                """),
-            ]
-        )
-        description = prompt | llm | parser
-        result = description.invoke({"logs": logs, "code": code})
-
-        return Command(
-            update={
-                "suggestion_summary": result.get("suggestion_summary"),
-                "is_docker_created": True,
-            },
-            goto="debug" if result.get("has_errors") else "__end__",
-        )
-
-    # feedback = input(f"{telegram_bot_username} is updated! If you like the changes, type (finish)")
-
-    # goto = "debug" if feedback.strip().lower() != "finish" else "__end__"
-
+    print("Reading logs...")
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", SYSTEM_PROMPT_DESCRIBE),
+            ("human", 
+            f"""
+            logs: {logs}\n\n
+            code: {code}
+            """),
+        ]
+    )
+    description = prompt | llm | parser
+    result = description.invoke({"logs": logs, "code": code})
+    print("Description of the logs:", result.get("suggestion_summary"))
     return Command(
         update={
-            "summary": result.get("summary"),
-            "TZ": result.get("TZ"),
+            "suggestion_summary": result.get("suggestion_summary"),
             "is_docker_created": True,
         },
-        goto="__end__",
+        goto="debug" if result.get("has_errors") else END,
     )
+
 
 
 def debug(state: OverallState):
@@ -223,10 +211,11 @@ def debug(state: OverallState):
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_DEBUG),
-            ("human", f"""
-            logs: {logs}
-            code: {code}
-            suggestion_summary: {suggestion_summary}
+            ("human", 
+            f"""
+            logs: {logs}\n\n
+            code: {code}\n\n
+            suggestion_summary: {suggestion_summary}\n\n
             user_suggestion: {user_suggestion}
             """),
         ]
