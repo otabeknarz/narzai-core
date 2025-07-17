@@ -6,7 +6,6 @@ import uuid
 from langchain.chat_models import init_chat_model
 from pydantic import BaseModel
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing import Annotated, Optional
@@ -65,11 +64,7 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_START),
-            ("human",
-            f"""
-            First description: {description}\n\n
-            qa_history : {qna_text}
-            """),
+            ("human", f"First description: {description}\n\nqa_history : {qna_text}"),
         ]
     )
 
@@ -109,7 +104,7 @@ def startProject(state: OverallState):
 
     # writing .env file
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
-    file_agent.write_to_file(".env/TELEGRAM_BOT_TOKEN", telegram_token)
+    file_agent.write_to_file(".env", f"TELEGRAM_BOT_TOKEN={telegram_token}")
 
 
 def generate(state: OverallState) -> None:
@@ -119,10 +114,7 @@ def generate(state: OverallState) -> None:
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_GENERATE),
-            ("human",
-            f"""
-            Description: {state.TZ}
-            """),
+            ("human", f"Description: {state.TZ}"),
         ]
     )
     chain = prompt | llm | parser
@@ -137,7 +129,7 @@ def generate(state: OverallState) -> None:
     print("Project files generated successfully.")
 
 
-def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
+def run(state: OverallState) -> Command[Literal["debug"]]:
     telegram_bot_username = state.telegram_bot_username
     project_id = state.project_id
         
@@ -146,7 +138,7 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
     # read files and copy into code
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
     code = {}
-    for filename in file_agent.get_project_structure().keys():
+    for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
 
     # Install deps
@@ -168,40 +160,24 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
     time.sleep(3)
     logs = get_logs(project_name=telegram_bot_username)
 
-    if logs: # theoretically, there could be logs before the activation of the docker container
-        print("Reading logs...")
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", SYSTEM_PROMPT_DESCRIBE),
-                ("human", f"""
-                logs: {logs}
-                code: {code}
-                """),
-            ]
-        )
-        description = prompt | llm | parser
-        result = description.invoke({"logs": logs, "code": code})
-
-        return Command(
-            update={
-                "suggestion_summary": result.get("suggestion_summary"),
-                "is_docker_created": True,
-            },
-            goto="debug" if result.get("has_errors") else "__end__",
-        )
-
-    # feedback = input(f"{telegram_bot_username} is updated! If you like the changes, type (finish)")
-
-    # goto = "debug" if feedback.strip().lower() != "finish" else "__end__"
-
+    print("Reading logs...")
+    prompt = ChatPromptTemplate(
+        [
+            ("system", SYSTEM_PROMPT_DESCRIBE),
+            ("human", f"Logs: {logs}\n\nCodebase: {code}"),
+        ]
+    )
+    description = prompt | llm | parser
+    result = description.invoke({"logs": logs, "code": code})
+    print("Description of the logs:", result.get("suggestion_summary"))
     return Command(
         update={
-            "summary": result.get("summary"),
-            "TZ": result.get("TZ"),
+            "suggestion_summary": result.get("suggestion_summary"),
             "is_docker_created": True,
         },
-        goto="__end__",
+        goto="debug" if result.get("has_errors") else END,
     )
+
 
 
 def debug(state: OverallState):
@@ -215,20 +191,15 @@ def debug(state: OverallState):
     # read files and copy into code dictionary
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
     code = {}
-    for filename in file_agent.get_project_structure().keys():
+    for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
 
     user_suggestion = input("Please provide your suggestion: ")
 
-    prompt = ChatPromptTemplate.from_messages(
+    prompt = ChatPromptTemplate(
         [
             ("system", SYSTEM_PROMPT_DEBUG),
-            ("human", f"""
-            logs: {logs}
-            code: {code}
-            suggestion_summary: {suggestion_summary}
-            user_suggestion: {user_suggestion}
-            """),
+            ("human", f"Logs: {logs}\n\nCodebase: {code}\n\nSuggestion Summary: {suggestion_summary}\n\nSuggestion: {user_suggestion}"),
         ]
     )
 

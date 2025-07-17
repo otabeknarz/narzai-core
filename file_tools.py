@@ -12,18 +12,17 @@ class FileAgent:
 
     def get_project_structure(self):
         """
-        Returns the folder and file structure as a nested dictionary from the base path.
+        Returns a flat list of file paths (including subfolders) from the base path.
+        Example: ['bot/handlers/image_handler.py', 'main.py']
         """
-        structure = {}
-        for root, dirs, files in os.walk(self.base_path):
-            rel_path = os.path.relpath(root, self.base_path)
-            current = structure
-            if rel_path != ".":
-                for part in rel_path.split(os.sep):
-                    current = current.setdefault(part, {})
+        structure = []
+        for root, _, files in os.walk(self.base_path):
             for file in files:
-                current[file] = "file"
+                rel_dir = os.path.relpath(root, self.base_path)
+                rel_file = os.path.join(rel_dir, file) if rel_dir != "." else file
+                structure.append(rel_file.replace(os.sep, "/"))  # Ensure Unix-style path
         return structure
+
 
     def read_file(self, relative_path):
         """
