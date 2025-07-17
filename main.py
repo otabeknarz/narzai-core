@@ -6,7 +6,6 @@ import uuid
 from langchain.chat_models import init_chat_model
 from pydantic import BaseModel
 from langgraph.graph import StateGraph, START, END
-from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing import Annotated, Optional
@@ -148,6 +147,7 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
     code = {}
     for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
+    code = '{' + str(code) + '}'
 
     # Install deps
     print("Creating virtual environment")
@@ -169,13 +169,13 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
     logs = get_logs(project_name=telegram_bot_username)
 
     print("Reading logs...")
-    prompt = ChatPromptTemplate.from_messages(
+    prompt = ChatPromptTemplate(
         [
             ("system", SYSTEM_PROMPT_DESCRIBE),
             ("human", 
             f"""
-            logs: {logs}\n\n
-            code: {code}
+            Logs: {logs}\n\n
+            Codebase: {code}
             """),
         ]
     )
@@ -205,18 +205,19 @@ def debug(state: OverallState):
     code = {}
     for filename in file_agent.get_project_structure():
         code[filename] = file_agent.read_file(filename)
+    code = '{' + str(code) + '}'
 
     user_suggestion = input("Please provide your suggestion: ")
 
-    prompt = ChatPromptTemplate.from_messages(
+    prompt = ChatPromptTemplate(
         [
             ("system", SYSTEM_PROMPT_DEBUG),
             ("human", 
             f"""
-            logs: {logs}\n\n
-            code: {code}\n\n
-            suggestion_summary: {suggestion_summary}\n\n
-            user_suggestion: {user_suggestion}
+            Logs: {logs}\n\n
+            Codebase: {code}\n\n
+            Suggestion Summary: {suggestion_summary}\n\n
+            User Suggestion: {user_suggestion}
             """),
         ]
     )
