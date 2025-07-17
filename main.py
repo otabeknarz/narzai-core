@@ -22,7 +22,7 @@ from file_tools import FileAgent
 from prompts import (
     SYSTEM_PROMPT_START,
     SYSTEM_PROMPT_GENERATE,
-    SYSTEM_PROMPT_WRITE_CODE,
+    SYSTEM_PROMPT_DESCRIBE,
     SYSTEM_PROMPT_DEBUG
 )
 from docker_client import (
@@ -52,9 +52,8 @@ class OverallState(BaseModel):
     messages: Annotated[list[AnyMessage], add_messages]
     questionsAnswers: Annotated[list[str], merge_questions] = []
     questions: Optional[list[str]] = None
-    problem_from_user: Optional[str] = None
-    problem_summary: Optional[str] = None
-    finished: Optional[str] = None
+    user_suggestion: Optional[str] = None
+    suggestion_summary: Optional[str] = None
     enough: Optional[bool] = False
     is_docker_created: bool = False
 
@@ -161,46 +160,35 @@ def run(state: OverallState) -> Command[Literal["debug", "__end__"]]:
         )
 
     time.sleep(3)
-
-    logs = get_logs(telegram_bot_username)
-    message = SYSTEM_PROMPT_DEBUG.format(logs, code)
-    print(message)
-    qna_text = "\n".join(state.questionsAnswers)
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", message),
-            ("human", f"""
-            qa_history : {qna_text},
-            logs : {logs},
-            code : {code}
-            """),
-        ]
-    )
-    state.is_docker_created = True
-
-    chain = prompt | llm | parser
-    result = chain.invoke({"qna_text": qna_text})
-    if result.get("need_to_debug"):
-        print(f"I can see the error in the logs, i'm fixing it\n{result.get('problem_summary')}")
+    logs = get_logs(project_name=telegram_bot_username)
+    if logs:
+        print("Reading logs...")
+        description = ChatPromptTemplate.from_messages(
+            [
+                ("system", SYSTEM_PROMPT_DESCRIBE),
+                ("human", f"""
+                logs : {logs}
+                """),
+            ]
+        )
+        chain = description | llm | parser
+        result = chain.invoke({"logs": logs})
+        
         return Command(
             update={
-                "problem_summary": result.get("problem_summary"),
-                "questions": result.get("questions"),
-                "summary": result.get("summary"),
-                "TZ": result.get("TZ"),
+                "suggestion_summary": result.get("suggestion_summary"),
+                "summary": state.summary,
                 "is_docker_created": True,
             },
-            goto="debug",
+            goto="debug" if result.get("has_errors") else "__end__",
         )
 
-    feedback = input(f"{telegram_bot_username} is working! Can you test again?\nIf everything is working fine, type (finish)")
+    # feedback = input(f"{telegram_bot_username} is updated! If you like the changes, type (finish)")
 
-    goto = "debug" if feedback.strip().lower() != "finish" else "__end__"
+    # goto = "debug" if feedback.strip().lower() != "finish" else "__end__"
 
     return Command(
         update={
-            "problem_from_user": feedback,
-            "questions": result.get("questions"),
             "summary": result.get("summary"),
             "TZ": result.get("TZ"),
             "is_docker_created": True,
@@ -214,18 +202,17 @@ def debug(state: OverallState):
     project_id = state.project_id
 
     logs = get_logs(project_name=telegram_bot_username)
-    problem_from_user = state.problem_from_user or ""
-    problem_summary = state.problem_summary or ""
+    suggestion_summary = state.suggestion_summary
+    user_suggestion = state.user_suggestion
 
     qna_text = "\n".join(state.questionsAnswers)
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", SYSTEM_PROMPT_WRITE_CODE),
+            ("system", SYSTEM_PROMPT_DEBUG),
             ("human", f"""
-            qa_history : {qna_text}
             logs : {logs}
-            problem_summary (may be blank) : {problem_summary}
-            info from user (may be blank) : {problem_from_user}
+            suggestion_summary: {suggestion_summary}
+            user_suggestion: {user_suggestion}
             """),
         ]
     )
