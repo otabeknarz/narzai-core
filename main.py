@@ -137,9 +137,20 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
 
     # read files and copy into code
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
-    code = {}
+    code = ""
     for filename in file_agent.get_project_structure():
-        code[filename] = file_agent.read_file(filename)
+        code += f"{filename}: {file_agent.read_file(filename)} \n\n"
+
+    print(f"initial code {code}")
+    i = 0
+    iterations = len(code) + code.count("{") + code.count("}")
+    while i < iterations:
+        if "{" == code[i]: 
+            code = code[:i+1] + "{" + code[i+1:]; i += 1
+        elif "}" == code[i]:
+            code = code[:i+1] + "}" + code[i+1:]; i += 1
+        i += 1
+    print(f"edited code {code}")
 
     # Install deps
     print("Creating virtual environment")
@@ -175,8 +186,10 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
             "suggestion_summary": result.get("suggestion_summary"),
             "is_docker_created": True,
         },
-        goto="debug" if result.get("has_errors") else END,
-    )
+        goto="debug"
+    ) if result.get("has_errors") else Command(update={
+            "suggestion_summary": result.get("suggestion_summary"),
+            "is_docker_created": True,})
 
 
 
@@ -188,12 +201,21 @@ def debug(state: OverallState):
     suggestion_summary = state.suggestion_summary
     user_suggestion = state.user_suggestion
 
-    # read files and copy into code dictionary
+    # read files and copy into code
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
-    code = {}
+    code = ""
     for filename in file_agent.get_project_structure():
-        code[filename] = file_agent.read_file(filename)
-
+        code += f"{filename}: {file_agent.read_file(filename)} \n\n"
+    print(f"initial code {code}")
+    i = 0
+    iterations = len(code) + code.count("{") + code.count("}")
+    while i < iterations:
+        if "{" == code[i]: 
+            code = code[:i+1] + "{" + code[i+1:]; i += 1
+        elif "}" == code[i]:
+            code = code[:i+1] + "}" + code[i+1:]; i += 1
+        i += 1
+    print(f"edited code {code}")
     user_suggestion = input("Please provide your suggestion: ")
 
     prompt = ChatPromptTemplate(
@@ -213,12 +235,10 @@ def debug(state: OverallState):
 
     return Command(
         update={
-            "questions": result.get("questions"),
-            "summary": result.get("summary"),
-            "TZ": result.get("TZ"),
+            "user_suggestion": user_suggestion,
+            "suggestion_summary": suggestion_summary,
             "is_docker_created": True,
-        },
-        goto="run",
+        }
     )
 
 
