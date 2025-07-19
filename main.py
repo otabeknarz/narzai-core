@@ -30,12 +30,13 @@ from docker_client import (
     stop_project,
     restart_project,
     get_logs,
+    stream_logs
 )
 
 load_dotenv()
 
 # LLM
-llm = init_chat_model("google_genai:gemini-2.0-flash")
+llm = init_chat_model("google_genai:gemini-2.5-flash")
 parser = JsonOutputParser()
 docker_client = docker.from_env()
 
@@ -141,7 +142,6 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
     for filename in file_agent.get_project_structure():
         code += f"{filename}: {file_agent.read_file(filename)} \n\n"
 
-    print(f"initial code {code}")
     i = 0
     iterations = len(code) + code.count("{") + code.count("}")
     while i < iterations:
@@ -150,7 +150,6 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
         elif "}" == code[i]:
             code = code[:i+1] + "}" + code[i+1:]; i += 1
         i += 1
-    print(f"edited code {code}")
 
     # Install deps
     print("Creating virtual environment")
@@ -168,8 +167,7 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
             project_path=project_dir,
         )
 
-    time.sleep(3)
-    logs = get_logs(project_name=telegram_bot_username)
+    logs = stream_logs(project_name=telegram_bot_username)
 
     print("Reading logs...")
     prompt = ChatPromptTemplate(
@@ -206,7 +204,6 @@ def debug(state: OverallState):
     code = ""
     for filename in file_agent.get_project_structure():
         code += f"{filename}: {file_agent.read_file(filename)} \n\n"
-    print(f"initial code {code}")
     i = 0
     iterations = len(code) + code.count("{") + code.count("}")
     while i < iterations:
@@ -215,7 +212,7 @@ def debug(state: OverallState):
         elif "}" == code[i]:
             code = code[:i+1] + "}" + code[i+1:]; i += 1
         i += 1
-    print(f"edited code {code}")
+        
     user_suggestion = input("Please provide your suggestion: ")
 
     prompt = ChatPromptTemplate(
@@ -231,7 +228,7 @@ def debug(state: OverallState):
 
     # save changes
     for filename, file_content in debugged_code.items():
-        file_agent.write_file(filename, file_content)
+        file_agent.write_to_file(filename, file_content)
 
     return Command(
         update={
