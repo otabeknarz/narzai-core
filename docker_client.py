@@ -115,3 +115,20 @@ def get_logs(project_name: str, tail: int = 100):
         print(f"Container '{project_name}' not found.")
     except APIError as e:
         print(f"Logs error: {e}")
+
+
+def stream_logs(project_name: str):
+    """
+    Stream logs in real time from a running Docker container.
+    """
+    try:
+        container = client.containers.get(project_name)
+        print(f"--- Streaming logs from '{project_name}' (Press Ctrl+C to stop) ---")
+        for log in container.logs(stream=True, follow=True):
+            print(log.decode('utf-8'), end='')
+    except NotFound:
+        print(f"Container '{project_name}' not found.")
+    except APIError as e:
+        print(f"Logs error: {e}")
+    except KeyboardInterrupt:
+        print("\nStopped streaming logs.")

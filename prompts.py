@@ -54,7 +54,7 @@ Output Rules
 - Do not include any text before or after the JSON.
 - `summary` should describe the project clearly for a product owner.
 - `TZ` should be sufficient for a developer to begin building the bot.
-- use double curly braces to define dictionary values in the JSON.
+- Must: Use double curly braces to define dictionary values in the JSON. Double any single curly braces.
 """
 
 SYSTEM_PROMPT_GENERATE = """
