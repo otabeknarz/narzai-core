@@ -14,7 +14,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
 from typing_extensions import Literal
 from langchain_core.output_parsers.json import JsonOutputParser
-from functions import merge_questions, get_username
+from functions import merge_questions, get_username, add_braces
 from dotenv import load_dotenv
 
 from file_tools import FileAgent
@@ -36,7 +36,7 @@ from docker_client import (
 load_dotenv()
 
 # LLM
-llm = init_chat_model("google_genai:gemini-2.5-flash")
+llm = init_chat_model("google_genai:gemini-2.0-flash")
 parser = JsonOutputParser()
 docker_client = docker.from_env()
 
@@ -77,7 +77,7 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
             "enough": result.get("enough"),
             "questions": result.get("questions"),
             "summary": result.get("summary"),
-            "TZ": result.get("TZ"),
+            "TZ": add_braces(str(result.get("TZ"))),
         },
         goto="startProject" if result.get("enough") is True else "askFromUser",
     )
@@ -103,9 +103,12 @@ def startProject(state: OverallState):
     telegram_bot_username = state.telegram_bot_username
     project_id = state.project_id
 
+    environment_variables = input("Please provide environment variables in the format KEY=VALUE, separated by commas (e.g., KEY1=VALUE1,KEY2=VALUE2): ")
+    environment_variables = "\n".join(environment_variables.split(","))
+
     # writing .env file
     file_agent = FileAgent(project_id=project_id, bot_username=telegram_bot_username)
-    file_agent.write_to_file(".env", f"TELEGRAM_BOT_TOKEN={telegram_token}")
+    file_agent.write_to_file(".env", f"TELEGRAM_BOT_TOKEN={telegram_token}\n{environment_variables}")
 
 
 def generate(state: OverallState) -> None:
@@ -142,14 +145,7 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
     for filename in file_agent.get_project_structure():
         code += f"{filename}: {file_agent.read_file(filename)} \n\n"
 
-    i = 0
-    iterations = len(code) + code.count("{") + code.count("}")
-    while i < iterations:
-        if "{" == code[i]: 
-            code = code[:i+1] + "{" + code[i+1:]; i += 1
-        elif "}" == code[i]:
-            code = code[:i+1] + "}" + code[i+1:]; i += 1
-        i += 1
+    code = add_braces(code)
 
     # Install deps
     print("Creating virtual environment")
@@ -158,7 +154,7 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
             project_path=project_dir, project_name=telegram_bot_username
         )
         container = run_project(
-            project_name=telegram_bot_username, env_file=project_dir.join(".env")
+            project_name=telegram_bot_username, env_file=os.path.join(project_dir, ".env")
         )
     else:
         container = restart_project(
@@ -204,15 +200,9 @@ def debug(state: OverallState):
     code = ""
     for filename in file_agent.get_project_structure():
         code += f"{filename}: {file_agent.read_file(filename)} \n\n"
-    i = 0
-    iterations = len(code) + code.count("{") + code.count("}")
-    while i < iterations:
-        if "{" == code[i]: 
-            code = code[:i+1] + "{" + code[i+1:]; i += 1
-        elif "}" == code[i]:
-            code = code[:i+1] + "}" + code[i+1:]; i += 1
-        i += 1
-        
+    
+    code = add_braces(code)
+    
     user_suggestion = input("Please provide your suggestion: ")
 
     prompt = ChatPromptTemplate(
@@ -224,7 +214,7 @@ def debug(state: OverallState):
 
     chain = prompt | llm | parser
     debugged_code = chain.invoke({"logs": logs, "code": code, "suggestion_summary": suggestion_summary, "user_suggestion": user_suggestion})
-    print(debugged_code)
+    print("Debugged:", debugged_code)
 
     # save changes
     for filename, file_content in debugged_code.items():
@@ -287,7 +277,9 @@ Example prompt:
 name:
 elephant image gen bot
 description:
- The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture
+ The bot needs to generate or find image of elephant from public source and send to user after they press /start or write any text or send any signal in general. No matter what bot should reply with random elephant picture. Use free and active api, you can use wikimedia too or free imaage search. as long as its not paid. if service requires user to get personal api, report to user asking for it
 bot_token: 5845005240:AAEp-dcOK9WhORoOTPmFjhMaJ12iyshHz6E (i am gonna revoke it anyway. github guys, don't get excited)
 bot username: @credentis_bot
+
+PEXELS_API_KEY=vMM0Q5KNiprhm682V3IR9zmahBPDbmL3DxjY9TgmK8vpHaYOqtQcuoIe
 """
