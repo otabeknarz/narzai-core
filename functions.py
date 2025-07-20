@@ -13,3 +13,14 @@ def get_username(telegram_token: str) -> str:
     except requests.RequestException as e:
         print("Error fetching Telegram username:", e)
         return get_username(input("Telegram bot is not available, please provide a valid bot token to continue:"))
+
+def add_braces(code: str) -> str:
+    i = 0
+    iterations = len(code) + code.count("{") + code.count("}")
+    while i < iterations:
+        if "{" == code[i]: 
+            code = code[:i+1] + "{" + code[i+1:]; i += 1
+        elif "}" == code[i]:
+            code = code[:i+1] + "}" + code[i+1:]; i += 1
+        i += 1
+    return code

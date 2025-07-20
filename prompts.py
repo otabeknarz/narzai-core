@@ -44,7 +44,7 @@ If information IS sufficient:
   "enough": true,
   "questions": null,
   "summary": "<natural-language summary of the project idea and functionality>",
-  "TZ": "<technical specification: include all features, expected behavior, external libraries or APIs, edge cases, and implementation guidelines, except code examples>"
+  "TZ": "<technical specification: include all features, expected behavior, external libraries or APIs, edge cases, and implementation guidelines>"
 }}
 
 ----------------------------------------------------------------
@@ -187,16 +187,18 @@ Output Rules:
 - Each key is a filename or path (e.g. `bot/main.py`, `utils/helper.py`).
 - Each value is the *complete content* of that file: Python code or Markdown only.
 - Do **not** include any additional explanations or comments outside the code.
-- Do **not** write `.env` files — assume the token is loaded via `python-dotenv` using the key `"TELEGRAM_BOT_TOKEN"`.
 - Use up-to-date `aiogram` and compatible libraries only — no deprecated APIs or practices.
 - Include import paths, function definitions, and project structure that can run without refactoring.
 - Do **not** edit, reformat, or remove code that does not need to be changed.
+- Do **not** include ```json and ```python tags in the output.
 
 ----------------------------------------------------------------
 Example Output:
 ----------------------------------------------------------------
 {{
-  "main.py": "from aiogram import Bot, Dispatcher, executor, types\\n...",
-  "bot/handlers/start.py": "from aiogram import types\\n..."
+  "README.md": "markdown content...",
+  "main.py": "Python code...",
+  "bot/handlers/start.py": "Python code...",
+  "requirements.txt": "aiogram\npython-dotenv\n"
 }}
 """

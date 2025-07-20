@@ -1,11 +1,9 @@
-import os
 import docker
-import docker.errors
 from dotenv import dotenv_values
-from docker.errors import NotFound, APIError, BuildError, ContainerError
+from docker.errors import BuildError, APIError, ContainerError, ImageNotFound, NotFound
+import os
 
 client = docker.from_env()
-
 
 def initialize_project(project_path: str, project_name: str):
     """
@@ -13,33 +11,50 @@ def initialize_project(project_path: str, project_name: str):
     """
     try:
         image, _ = client.images.build(path=project_path, tag=project_name)
+        print(f"Image '{project_name}' built.")
         return image
     except BuildError as e:
         print(f"Build failed: {e}")
     except APIError as e:
         print(f"Docker API error: {e}")
 
-
-def run_project(project_name: str, env_file: str = None, ports: dict = None):
+def run_project(
+    project_name: str,
+    env_file: str = None,
+    env_dict: dict = None,
+    ports: dict = None,
+):
     """
     Start a Docker container from an image.
+    Exactly mimics `docker run --env-file <env_file>` if env_file is provided.
+    Otherwise you can pass a raw dict via `env_dict`.
     """
+    # --- Sanity checks ---
+    if env_file:
+        if not os.path.isfile(env_file):
+            print(f"Env‑file '{env_file}' not found. Aborting.")
+            return
+        # docker run --env-file silently ignores blank lines and comments
+        environment = dotenv_values(env_file)
+    else:
+        environment = env_dict
+
+    ports = ports or {}
+
+    # tear down any existing container
     try:
-        # Remove old container if it exists
-        try:
-            old = client.containers.get(project_name)
-            old.stop()
-            old.remove()
-            print(f"Old container '{project_name}' removed.")
-        except NotFound:
-            pass
+        old = client.containers.get(project_name)
+        old.stop()
+        old.remove()
+        print(f"Old container '{project_name}' removed.")
+    except NotFound:
+        pass
 
-        env_vars: dict = dotenv_values(env_file)
-
+    try:
         container = client.containers.run(
             image=project_name,
             name=project_name,
-            environment=env_vars,
+            environment=environment,
             ports=ports,
             detach=True,
         )
@@ -49,7 +64,6 @@ def run_project(project_name: str, env_file: str = None, ports: dict = None):
         print(f"Container error: {e}")
     except APIError as e:
         print(f"Docker API error: {e}")
-
 
 def stop_project(project_name: str):
     """
@@ -64,9 +78,23 @@ def stop_project(project_name: str):
     except APIError as e:
         print(f"Stop error: {e}")
 
+def restart_container(project_name: str):
+    """
+    Low‑level restart.  If the container exists, just restart it in place.
+    """
+    try:
+        container = client.containers.get(project_name)
+        container.restart()
+        print(f"Container '{project_name}' restarted.")
+    except NotFound:
+        print(f"Container '{project_name}' not found.")
+    except APIError as e:
+        print(f"Restart error: {e}")
 
 def restart_project(
-    project_name: str, has_changes: bool = False, project_path: str = None
+    project_name: str,
+    has_changes: bool = False,
+    project_path: str = None
 ):
     """
     Restart the Docker container.
@@ -81,23 +109,12 @@ def restart_project(
             try:
                 client.images.remove(image=project_name, force=True)
                 print(f"Old image '{project_name}' removed.")
-            except docker.errors.ImageNotFound:
+            except ImageNotFound:
                 print(f"No existing image '{project_name}' to remove.")
             initialize_project(project_path, project_name)
 
         restart_container(project_name)
 
-    except APIError as e:
-        print(f"Restart error: {e}")
-
-
-def restart_container(project_name: str):
-    try:
-        container = client.containers.get(project_name)
-        container.restart()
-        print(f"Container '{project_name}' restarted.")
-    except NotFound:
-        print(f"Container '{project_name}' not found.")
     except APIError as e:
         print(f"Restart error: {e}")
 
