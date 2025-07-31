@@ -1,6 +1,5 @@
 import os
 import docker
-import time
 import uuid
 
 from langchain.chat_models import init_chat_model
@@ -36,7 +35,7 @@ from docker_client import (
 load_dotenv()
 
 # LLM
-llm = init_chat_model("google_genai:gemini-2.0-flash")
+llm = init_chat_model("google_genai:gemini-2.5-flash")
 parser = JsonOutputParser()
 docker_client = docker.from_env()
 
@@ -65,7 +64,7 @@ def createSummary(state: OverallState) -> Command[Literal["askFromUser", "startP
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_START),
-            ("human", f"First description: {description}\n\nqa_history : {qna_text}"),
+            ("human", "First description: {description}\n\nqa_history : {qna_text}"),
         ]
     )
 
@@ -118,7 +117,7 @@ def generate(state: OverallState) -> None:
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT_GENERATE),
-            ("human", f"Description: {state.TZ}"),
+            ("human", "Description: {TZ}"),
         ]
     )
     chain = prompt | llm | parser
@@ -169,7 +168,7 @@ def run(state: OverallState) -> Command[Literal["debug"]]:
     prompt = ChatPromptTemplate(
         [
             ("system", SYSTEM_PROMPT_DESCRIBE),
-            ("human", f"Logs: {logs}\n\nCodebase: {code}"),
+            ("human", "Logs: {logs}\n\nCodebase: {code}"),
         ]
     )
     description = prompt | llm | parser
@@ -208,7 +207,7 @@ def debug(state: OverallState):
     prompt = ChatPromptTemplate(
         [
             ("system", SYSTEM_PROMPT_DEBUG),
-            ("human", f"Logs: {logs}\n\nCodebase: {code}\n\nSuggestion Summary: {suggestion_summary}\n\nSuggestion: {user_suggestion}"),
+            ("human", "Logs: {logs}\n\nCodebase: {code}\n\nSuggestion Summary: {suggestion_summary}\n\nSuggestion: {user_suggestion}"),
         ]
     )
 
